@@ -128,7 +128,7 @@ function App() {
             <div className="landing-card">
               <h1 className="landing-title">Tell us about your pension situation.</h1>
               <p className="landing-subtitle">
-                Please omit any personal data like names, addresses etc.
+                Please omit any personal data like names, addresses etc. Anything entered is stored in a Supabase database.
               </p>
               <textarea
                 className="text-box landing-input"
