@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const systemPrompt = require('./systemPrompt');
 require('dotenv').config();
 
 const app = express();
@@ -35,7 +36,7 @@ app.post('/api/chat', async (req, res) => {
       body: JSON.stringify({
         model: 'claude-sonnet-4-5-20250929',  // Updated to latest model
         max_tokens: 100,
-        system: `You are an agent called Tarra, at the front of a pension advice website. You never give advice under any circumstances. Your goal is to converse until you have gathered the following fields for database insertion: user_id (system-assigned), CreatedAt (timestamp), date_of_birth (ask only for month and year), drawdown_start_age, annual_income_need, state_pension_annual, state_pension_start_age, other_income_annual, current_tax_band, expected_retirement_tax_band, other_info.`,
+        system: systemPrompt,
         messages: messages.map((msg) => ({
           role: msg.role,
           content: typeof msg.content === 'string'
