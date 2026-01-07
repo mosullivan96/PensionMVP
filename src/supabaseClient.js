@@ -18,3 +18,10 @@ export const supabase = supabaseUrl && supabaseKey
   ? createClient(supabaseUrl, supabaseKey)
   : null;
 
+export const signUp = async (email, password) => {
+  if (!supabase) {
+    return { data: null, error: new Error('Supabase not configured.') };
+  }
+  return supabase.auth.signUp({ email, password });
+};
+
