@@ -34,8 +34,8 @@ app.post('/api/chat', async (req, res) => {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-5-20250929',  // Updated to latest model
-        max_tokens: 100,
+        model: 'claude-sonnet-4-5-20250929',
+        max_tokens: 1000,
         system: systemPrompt,
         messages: messages.map((msg) => ({
           role: msg.role,
@@ -50,10 +50,12 @@ app.post('/api/chat', async (req, res) => {
 
     if (!response.ok) {
       const errorData = await response.text();
+      console.error('Claude API error response:', errorData);
       return res.status(response.status).json({ error: errorData || `Upstream error: ${response.status}` });
     }
 
     const data = await response.json();
+    console.log('Claude API response length:', data?.content?.[0]?.text?.length || 0);
     res.json(data);
   } catch (error) {
     console.error('Error calling Claude API:', error);

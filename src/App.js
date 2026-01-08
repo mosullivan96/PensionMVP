@@ -11,6 +11,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [user, setUser] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
+  const [projections, setProjections] = useState(null);
   const [showReset, setShowReset] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
   const [resetStatus, setResetStatus] = useState('');
@@ -22,6 +23,186 @@ function App() {
   const [passwordUpdateLoading, setPasswordUpdateLoading] = useState(false);
   const messagesEndRef = useRef(null);
   const userSyncingRef = useRef(false);
+  const makeUuid = () =>
+    (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `uuid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  const extractDataPayload = (text) => {
+    if (!text) return null;
+    const match = text.match(/<data>\s*([\s\S]*?)\s*<\/data>/);
+    if (!match || !match[1]) return null;
+    try {
+      return JSON.parse(match[1]);
+    } catch (err) {
+      console.error('Failed to parse <data> JSON:', err);
+      return null;
+    }
+  };
+
+  const persistUserData = async (payload) => {
+    if (!supabase || !user || !payload) return;
+    try {
+      const record = {
+        user_id: user.id,
+        email: user.email ?? null,
+        date_of_birth: payload.date_of_birth ?? null,
+        retirement_age: payload.planned_retirement_age ?? null,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase
+        .from('users')
+        .upsert(record, { onConflict: 'user_id' });
+      if (error) {
+        console.error('Supabase users upsert error:', error.message);
+      } else {
+        console.info('Supabase users upsert success');
+      }
+    } catch (err) {
+      console.error('Supabase users upsert failure:', err);
+    }
+  };
+
+  const persistPropertyData = async (payload) => {
+    if (!supabase || !user || !payload) return;
+    if (payload.property_value === undefined || payload.property_value === null) return;
+    try {
+      const record = {
+        property_id: user.id,
+        user_id: user.id,
+        current_value: payload.property_value,
+        valuation_date: new Date().toISOString().split('T')[0],
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase
+        .from('property')
+        .upsert(record, { onConflict: 'property_id' });
+      if (error) {
+        console.error('Supabase property upsert error:', error.message);
+      } else {
+        console.info('Supabase property upsert success');
+      }
+    } catch (err) {
+      console.error('Supabase property upsert failure:', err);
+    }
+  };
+
+  const persistStatePensionData = async (payload) => {
+    if (!supabase || !user || payload.state_pension_amount === undefined || payload.state_pension_amount === null) return;
+    try {
+      const record = {
+        state_pension_id: user.id, // stable per user
+        user_id: user.id,
+        estimated_annual_amount: payload.state_pension_amount,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase
+        .from('state_pension')
+        .upsert(record, { onConflict: 'state_pension_id' });
+      if (error) {
+        console.error('Supabase state_pension upsert error:', error.message);
+      } else {
+        console.info('Supabase state_pension upsert success');
+      }
+    } catch (err) {
+      console.error('Supabase state_pension upsert failure:', err);
+    }
+  };
+
+  const persistLiabilitiesData = async (payload) => {
+    if (!supabase || !user || payload.total_debt === undefined || payload.total_debt === null) return;
+    try {
+      const record = {
+        liability_id: user.id, // stable per user
+        user_id: user.id,
+        liability_type: 'total_debt_summary',
+        current_balance: payload.total_debt,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase
+        .from('liabilities')
+        .upsert(record, { onConflict: 'liability_id' });
+      if (error) {
+        console.error('Supabase liabilities upsert error:', error.message);
+      } else {
+        console.info('Supabase liabilities upsert success');
+      }
+    } catch (err) {
+      console.error('Supabase liabilities upsert failure:', err);
+    }
+  };
+
+  const persistPensionPotData = async (payload) => {
+    if (!supabase || !user || payload.total_pension_value === undefined || payload.total_pension_value === null) return;
+    try {
+      const record = {
+        pot_id: user.id, // stable per user
+        user_id: user.id,
+        provider_name: 'Combined pensions',
+        pot_type: 'aggregate',
+        current_value: payload.total_pension_value,
+        as_of_date: new Date().toISOString().split('T')[0],
+        monthly_contribution: payload.monthly_contribution ?? null,
+        is_active: payload.still_contributing ?? null,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase
+        .from('pension_pots')
+        .upsert(record, { onConflict: 'pot_id' });
+      if (error) {
+        console.error('Supabase pension_pots upsert error:', error.message);
+      } else {
+        console.info('Supabase pension_pots upsert success');
+      }
+    } catch (err) {
+      console.error('Supabase pension_pots upsert failure:', err);
+    }
+  };
+
+  const calculateProjections = (data) => {
+    const years = 10;
+    const results = [];
+    const currentYear = new Date().getFullYear();
+    const growthRate = 0.05; // 5%
+    const inflationRate = 0.025; // 2.5%
+
+    let currentPension = data.total_pension_value || 0;
+    const monthlyContribution = data.monthly_contribution || 0;
+    const annualContribution = monthlyContribution * 12;
+    const propertyValue = data.property_value || 0;
+    const totalDebt = data.total_debt || 0;
+    const statePensionAmount = data.state_pension_amount || 0;
+
+    for (let i = 0; i <= years; i++) {
+      const year = currentYear + i;
+      
+      // Pension growth
+      if (i > 0) {
+        currentPension = currentPension * (1 + growthRate) + annualContribution;
+      }
+
+      // Simple Net Worth: Pension + Property - Debt
+      const netWorth = currentPension + propertyValue - totalDebt;
+      
+      // Cash Income (simplified: state pension if age reached, plus placeholder)
+      // Note: We don't have age here easily without DOB parsing, 
+      // so we'll just show the potential state pension income for now.
+      const cashIncome = statePensionAmount * Math.pow(1 + inflationRate, i);
+
+      // Taxes (very simplified placeholder: 0 if income < 12570, then 20%)
+      const taxableIncome = Math.max(0, cashIncome - 12570);
+      const estimatedTax = taxableIncome * 0.2;
+
+      results.push({
+        year,
+        pensionTotal: Math.round(currentPension),
+        netWorth: Math.round(netWorth),
+        cashIncome: Math.round(cashIncome),
+        taxes: Math.round(estimatedTax)
+      });
+    }
+    setProjections(results);
+  };
 
   const makeId = () =>
     (typeof crypto !== 'undefined' && crypto.randomUUID)
@@ -173,8 +354,26 @@ function App() {
 
       const data = await response.json();
       const assistantText = data?.content?.[0]?.text || 'No response received.';
-      const assistantMessage = { id: makeId(), role: 'assistant', content: assistantText };
-      setMessages((prev) => [...prev, assistantMessage]);
+      console.log('Received from Claude:', assistantText);
+      const extracted = extractDataPayload(assistantText);
+      if (extracted) {
+        console.log('Data extracted successfully:', extracted);
+        persistUserData(extracted);
+        persistPropertyData(extracted);
+        persistStatePensionData(extracted);
+        persistLiabilitiesData(extracted);
+        persistPensionPotData(extracted);
+        calculateProjections(extracted);
+        const summaryMessage = {
+          id: makeUuid(),
+          role: 'assistant',
+          content: 'Perfect, we have all the data we need. Generating Simulation.',
+        };
+        setMessages((prev) => [...prev, summaryMessage]);
+      } else {
+        const assistantMessage = { id: makeUuid(), role: 'assistant', content: assistantText };
+        setMessages((prev) => [...prev, assistantMessage]);
+      }
     } catch (error) {
       console.error('Error calling Claude API:', error);
       const errorMessage = `Error: ${error.message}. Please check your API key and try again.`;
@@ -265,48 +464,91 @@ function App() {
                   onClick={sendMessage}
                   disabled={isLoading || !inputText.trim()}
                 >
-                  Generate Simulation
+                  Enter
                 </button>
               </div>
             </div>
           </div>
         ) : (
-          <div className="chat-container">
-            <div className="messages-area">
-              {messages.map((message) => (
-                <div key={message.id || message.content} className={`message ${message.role}`}>
-                  <div className="message-content">
-                    {message.content}
+          <div className={`chat-layout ${projections ? 'with-projections' : ''}`}>
+            {projections && (
+              <div className="projections-container">
+                <div className="projections-card">
+                  <h2 className="projections-title">10-Year Simulation</h2>
+                  <div className="projections-table-wrapper">
+                    <table className="projections-table">
+                      <thead>
+                        <tr>
+                          <th>Year</th>
+                          <th>Pension Total</th>
+                          <th>Net Worth</th>
+                          <th>Cash Income</th>
+                          <th>Est. Taxes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {projections.map((p) => (
+                          <tr key={p.year}>
+                            <td>{p.year}</td>
+                            <td>£{p.pensionTotal.toLocaleString()}</td>
+                            <td>£{p.netWorth.toLocaleString()}</td>
+                            <td>£{p.cashIncome.toLocaleString()}</td>
+                            <td>£{p.taxes.toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="projections-assumptions">
+                    <h3>Assumptions:</h3>
+                    <ul>
+                      <li>Annual Investment Growth: 5.0%</li>
+                      <li>Annual Inflation: 2.5%</li>
+                      <li>No drawdown or annuity products purchased yet</li>
+                      <li>Tax calculation: Simple 20% above Personal Allowance</li>
+                    </ul>
                   </div>
                 </div>
-              ))}
-              {isLoading && (
-                <div className="message assistant">
-                  <div className="message-content">
-                    <span className="typing-indicator">Thinking...</span>
-                  </div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
+              </div>
+            )}
 
-            <div className="input-area">
-              <textarea
-                className="text-box"
-                placeholder="Type your message..."
-                rows={3}
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={handleKeyDown}
-                disabled={isLoading}
-              />
-              <button
-                className="enter-button"
-                onClick={sendMessage}
-                disabled={isLoading || !inputText.trim()}
-              >
-                Generate Simulation
-              </button>
+            <div className="chat-container">
+              <div className="messages-area">
+                {messages.map((message) => (
+                  <div key={message.id || message.content} className={`message ${message.role}`}>
+                    <div className="message-content">
+                      {message.content}
+                    </div>
+                  </div>
+                ))}
+                {isLoading && (
+                  <div className="message assistant">
+                    <div className="message-content">
+                      <span className="typing-indicator">Thinking...</span>
+                    </div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+
+              <div className="input-area">
+                <textarea
+                  className="text-box"
+                  placeholder="Type your message..."
+                  rows={3}
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  disabled={isLoading}
+                />
+                <button
+                  className="enter-button"
+                  onClick={sendMessage}
+                  disabled={isLoading || !inputText.trim()}
+                >
+                  Enter
+                </button>
+              </div>
             </div>
           </div>
         )}
