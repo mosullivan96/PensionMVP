@@ -1,9 +1,317 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { Group } from '@visx/group';
+import { Bar as VisxBar, LinePath } from '@visx/shape';
+import { scaleLinear, scaleBand } from '@visx/scale';
+import { AxisBottom, AxisLeft, AxisRight } from '@visx/axis';
+import { ParentSize } from '@visx/responsive';
+import { curveMonotoneX } from '@visx/curve';
 import logo from './Logo.png';
 import { supabase } from './supabaseClient';
 import { Auth } from '@supabase/auth-ui-react';
 import { ThemeSupa } from '@supabase/auth-ui-shared';
 import './App.css';
+
+const TABLE_LABELS = {
+  pension_pots: {
+    label: "Pension Accounts",
+    fields: {
+      provider_name: "Provider",
+      pot_type: "Type",
+      current_value: "Current Value",
+      monthly_contribution: "Monthly Contrib.",
+      is_active: "Active"
+    }
+  },
+  property: {
+    label: "Property Assets",
+    fields: {
+      property_type: "Type",
+      address: "Address",
+      current_value: "Current Value",
+      mortgage_balance: "Mortgage Balance"
+    }
+  },
+  state_pension: {
+    label: "State Pension",
+    fields: {
+      estimated_annual_amount: "Annual Amount",
+      state_pension_age: "Start Age",
+      qualifying_years: "Qualifying Years"
+    }
+  },
+  liabilities: {
+    label: "Debts & Liabilities",
+    fields: {
+      liability_type: "Type",
+      creditor_name: "Creditor",
+      current_balance: "Total Balance"
+    }
+  },
+  db_pensions: {
+    label: "Final Salary Pensions",
+    fields: {
+      scheme_name: "Scheme Name",
+      employer: "Employer",
+      annual_pension_amount: "Annual Amount",
+      pension_start_age: "Start Age"
+    }
+  },
+  isa_accounts: {
+    label: "ISA Accounts",
+    fields: {
+      provider_name: "Provider",
+      isa_type: "Type",
+      current_balance: "Balance"
+    }
+  },
+  investment_accounts: {
+    label: "Investments",
+    fields: {
+      provider_name: "Provider",
+      account_type: "Type",
+      current_value: "Value"
+    }
+  },
+  other_assets: {
+    label: "Other Assets",
+    fields: {
+      asset_name: "Asset Name",
+      asset_type: "Type",
+      current_value: "Value"
+    }
+  },
+  income_sources: {
+    label: "Additional Income",
+    fields: {
+      source_name: "Source",
+      income_type: "Type",
+      annual_amount: "Annual Amount"
+    }
+  },
+  expenses: {
+    label: "Budget & Expenses",
+    fields: {
+      expense_name: "Expense Name",
+      expense_category: "Category",
+      annual_amount: "Annual Amount"
+    }
+  },
+  withdrawal_strategy: {
+    label: "Withdrawal Plans",
+    fields: {
+      scenario_name: "Scenario",
+      lump_sum_strategy: "Lump Sum Plan",
+      withdrawal_order: "Withdrawal Order"
+    }
+  },
+  life_events: {
+    label: "Future Events",
+    fields: {
+      event_name: "Event",
+      event_type: "Type",
+      cost: "Estimated Cost"
+    }
+  },
+  tax_calculations: {
+    label: "Tax Summaries",
+    fields: {
+      tax_year: "Tax Year",
+      total_income: "Total Income",
+      total_tax_paid: "Total Tax"
+    }
+  },
+  projections: {
+    label: "Saved Simulations",
+    fields: {
+      projection_type: "Type",
+      success_probability: "Success %",
+      depletion_age: "Funds Run Out Age"
+    }
+  },
+  spouse_data: {
+    label: "Partner Data",
+    fields: {
+      name: "Partner Name",
+      total_pension_value: "Pension Value",
+      state_pension_amount: "State Pension"
+    }
+  },
+  beneficiaries: {
+    label: "Legacy & Inheritance",
+    fields: {
+      name: "Beneficiary",
+      relationship: "Relationship",
+      intended_inheritance: "Planned Amount"
+    }
+  },
+  health_costs: {
+    label: "Healthcare Costs",
+    fields: {
+      chronic_conditions: "Conditions",
+      medications_monthly_cost: "Medication Cost",
+      insurance_premium_annual: "Insurance Premium"
+    }
+  },
+  goals: {
+    label: "Financial Goals",
+    fields: {
+      goal_name: "Goal",
+      target_amount: "Target Amount",
+      target_age: "Target Age"
+    }
+  }
+};
+
+const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
+  const margin = { top: 20, right: 60, bottom: 60, left: 60 };
+  const xMax = width - margin.left - margin.right;
+  const yMax = height - margin.top - margin.bottom;
+
+  const xScale = useMemo(
+    () =>
+      scaleBand({
+        range: [0, xMax],
+        round: true,
+        domain: data.map((d) => (d.age ? `Age ${d.age}` : d.year.toString())),
+        padding: 0.4,
+      }),
+    [xMax, data]
+  );
+
+  const yScale = useMemo(
+    () =>
+      scaleLinear({
+        range: [yMax, 0],
+        round: true,
+        domain: [0, Math.max(...data.map((d) => d.pensionTotal), 100000) * 1.1],
+      }),
+    [yMax, data]
+  );
+
+  const yIncomeScale = useMemo(
+    () =>
+      scaleLinear({
+        range: [yMax, 0],
+        round: true,
+        domain: [0, Math.max(...data.map((d) => d.cashIncome), 10000) * 1.2],
+      }),
+    [yMax, data]
+  );
+
+  return (
+    <svg width={width} height={height}>
+      <Group left={margin.left} top={margin.top}>
+        {/* Pension Bars */}
+        {data.map((d) => {
+          const label = d.age ? `Age ${d.age}` : d.year.toString();
+          const barWidth = xScale.bandwidth();
+          const barHeight = yMax - yScale(d.pensionTotal);
+          const barX = xScale(label);
+          const barY = yMax - barHeight;
+          const isRetired = d.age >= retirementAge;
+
+          return (
+            <VisxBar
+              key={d.year}
+              x={barX}
+              y={barY}
+              width={barWidth}
+              height={barHeight}
+              fill={isRetired ? "#2563eb" : "#93c5fd"}
+              rx={4}
+              opacity={0.8}
+            />
+          );
+        })}
+
+        {/* Income Line Overlay */}
+        <LinePath
+          data={data}
+          x={(d) => xScale(d.age ? `Age ${d.age}` : d.year.toString()) + xScale.bandwidth() / 2}
+          y={(d) => yIncomeScale(d.cashIncome)}
+          stroke="#f59e0b"
+          strokeWidth={3}
+          curve={curveMonotoneX}
+        />
+
+        {/* Income Points */}
+        {data.map((d) => (
+          <circle
+            key={`point-${d.year}`}
+            cx={xScale(d.age ? `Age ${d.age}` : d.year.toString()) + xScale.bandwidth() / 2}
+            cy={yIncomeScale(d.cashIncome)}
+            r={4}
+            fill="#f59e0b"
+            stroke="white"
+            strokeWidth={2}
+          />
+        ))}
+
+        <AxisLeft
+          scale={yScale}
+          tickFormat={(val) => `£${(val / 1000).toFixed(0)}k`}
+          stroke="#e5e7eb"
+          tickStroke="#e5e7eb"
+          tickLabelProps={() => ({
+            fill: "#6b7280",
+            fontSize: 10,
+            textAnchor: "end",
+            dy: "0.33em",
+          })}
+        />
+        
+        <AxisRight
+          left={xMax}
+          scale={yIncomeScale}
+          tickFormat={(val) => `£${(val / 1000).toFixed(1)}k`}
+          stroke="#e5e7eb"
+          tickStroke="#e5e7eb"
+          label="Annual Income"
+          labelProps={{
+            fill: "#f59e0b",
+            fontSize: 12,
+            fontWeight: 600,
+            textAnchor: "middle",
+          }}
+          tickLabelProps={() => ({
+            fill: "#f59e0b",
+            fontSize: 10,
+            textAnchor: "start",
+            dx: "0.33em",
+            dy: "0.33em",
+          })}
+        />
+
+        <AxisBottom
+          top={yMax}
+          scale={xScale}
+          stroke="#e5e7eb"
+          tickStroke="#e5e7eb"
+          tickLabelProps={() => ({
+            fill: "#6b7280",
+            fontSize: 10,
+            textAnchor: "middle",
+          })}
+        />
+      </Group>
+    </svg>
+  );
+};
+
+const ProjectionChart = ({ data, retirementAge }) => {
+  return (
+    <ParentSize>
+      {({ width, height }) => (
+        <ProjectionChartInner 
+          data={data} 
+          retirementAge={retirementAge} 
+          width={width} 
+          height={height} 
+        />
+      )}
+    </ParentSize>
+  );
+};
 
 function App() {
   const [messages, setMessages] = useState([]);
@@ -12,7 +320,13 @@ function App() {
   const [user, setUser] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
   const [projections, setProjections] = useState(null);
+  const [viewMode, setViewMode] = useState('table'); // 'table' or 'chart'
+  const [sidebarData, setSidebarData] = useState({});
+  const [expandedSections, setExpandedSections] = useState({});
+  const [expandedIntegrations, setExpandedIntegrations] = useState({});
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [showReset, setShowReset] = useState(false);
+  const [plannedRetirementAge, setPlannedRetirementAge] = useState(67);
   const [resetEmail, setResetEmail] = useState('');
   const [resetStatus, setResetStatus] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
@@ -166,35 +480,46 @@ function App() {
     const growthRate = 0.05; // 5%
     const inflationRate = 0.025; // 2.5%
 
+    let currentAge = null;
+    if (data.date_of_birth) {
+      const dob = new Date(data.date_of_birth);
+      const today = new Date();
+      currentAge = today.getFullYear() - dob.getFullYear();
+      const m = today.getMonth() - dob.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+        currentAge--;
+      }
+    }
+
     let currentPension = data.total_pension_value || 0;
     const monthlyContribution = data.monthly_contribution || 0;
     const annualContribution = monthlyContribution * 12;
     const propertyValue = data.property_value || 0;
     const totalDebt = data.total_debt || 0;
     const statePensionAmount = data.state_pension_amount || 0;
+    
+    if (data.planned_retirement_age) {
+      setPlannedRetirementAge(data.planned_retirement_age);
+    }
 
     for (let i = 0; i <= years; i++) {
       const year = currentYear + i;
+      const age = currentAge !== null ? currentAge + i : null;
       
       // Pension growth
       if (i > 0) {
         currentPension = currentPension * (1 + growthRate) + annualContribution;
       }
 
-      // Simple Net Worth: Pension + Property - Debt
+      // ... existing Net Worth, Cash Income, Taxes calculations ...
       const netWorth = currentPension + propertyValue - totalDebt;
-      
-      // Cash Income (simplified: state pension if age reached, plus placeholder)
-      // Note: We don't have age here easily without DOB parsing, 
-      // so we'll just show the potential state pension income for now.
       const cashIncome = statePensionAmount * Math.pow(1 + inflationRate, i);
-
-      // Taxes (very simplified placeholder: 0 if income < 12570, then 20%)
       const taxableIncome = Math.max(0, cashIncome - 12570);
       const estimatedTax = taxableIncome * 0.2;
 
       results.push({
         year,
+        age,
         pensionTotal: Math.round(currentPension),
         netWorth: Math.round(netWorth),
         cashIncome: Math.round(cashIncome),
@@ -202,6 +527,94 @@ function App() {
       });
     }
     setProjections(results);
+  };
+
+  const fetchSidebarData = async () => {
+    if (!supabase || !user) return;
+    try {
+      const results = {};
+      const tablesToFetch = [...Object.keys(TABLE_LABELS), 'users'];
+      for (const table of tablesToFetch) {
+        const { data, error } = await supabase
+          .from(table)
+          .select('*')
+          .eq('user_id', user.id);
+        
+        if (!error && data) {
+          results[table] = data[0] || null;
+        }
+      }
+      setSidebarData(results);
+    } catch (err) {
+      console.error('Error fetching sidebar data:', err);
+    }
+  };
+
+  const toggleSection = (table) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [table]: !prev[table]
+    }));
+  };
+
+  const handleDashboardClick = async (e) => {
+    if (e) e.preventDefault();
+    if (!user || !supabase) {
+      setShowAuth(true);
+      return;
+    }
+
+    try {
+      const results = {};
+      const tablesToFetch = [...Object.keys(TABLE_LABELS), 'users'];
+      for (const table of tablesToFetch) {
+        const { data, error } = await supabase
+          .from(table)
+          .select('*')
+          .eq('user_id', user.id);
+        
+        if (!error && data) {
+          results[table] = data[0] || null;
+        }
+      }
+      setSidebarData(results);
+
+      if (results.users || results.pension_pots) {
+        const payload = {
+          date_of_birth: results.users?.date_of_birth,
+          planned_retirement_age: results.users?.retirement_age,
+          total_pension_value: results.pension_pots?.current_value,
+          monthly_contribution: results.pension_pots?.monthly_contribution,
+          still_contributing: results.pension_pots?.is_active,
+          property_value: results.property?.current_value,
+          total_debt: results.liabilities?.current_balance,
+          state_pension_amount: results.state_pension?.estimated_annual_amount
+        };
+
+        if (payload.total_pension_value || payload.date_of_birth) {
+          calculateProjections(payload);
+          if (messages.length === 0) {
+            setMessages([{
+              id: makeId(),
+              role: 'assistant',
+              content: 'Welcome back! Here is your latest simulation based on your profile data.'
+            }]);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error loading dashboard:', err);
+    }
+  };
+
+  const formatValue = (val) => {
+    if (val === null || val === undefined || val === '') return 'Empty';
+    if (typeof val === 'boolean') return val ? 'Yes' : 'No';
+    if (typeof val === 'number') {
+      if (val > 1000) return `£${val.toLocaleString()}`;
+      return val.toString();
+    }
+    return val.toString();
   };
 
   const makeId = () =>
@@ -364,6 +777,7 @@ function App() {
         persistLiabilitiesData(extracted);
         persistPensionPotData(extracted);
         calculateProjections(extracted);
+        fetchSidebarData();
         const summaryMessage = {
           id: makeUuid(),
           role: 'assistant',
@@ -394,6 +808,8 @@ function App() {
     setMessages([]);
     setInputText('');
     setIsLoading(false);
+    setProjections(null);
+    setSidebarData({});
   };
 
   const handleLogout = async () => {
@@ -418,7 +834,11 @@ function App() {
           <span className="brand-name">Tarra</span>
         </div>
         <nav className="nav-links">
-          {user && <a href="#dashboard">Dashboard</a>}
+          {user && (
+            <a href="#dashboard" onClick={handleDashboardClick}>
+              Dashboard
+            </a>
+          )}
           <a href="#documentation">Documentation</a>
           <a href="#contact">Contact</a>
           {!user ? (
@@ -472,33 +892,141 @@ function App() {
         ) : (
           <div className={`chat-layout ${projections ? 'with-projections' : ''}`}>
             {projections && (
+              <div className={`sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}>
+                <div className="sidebar-header">
+                  <button 
+                    className="sidebar-toggle"
+                    onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                    title={isSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+                  >
+                    <span className={`arrow-head ${isSidebarCollapsed ? 'right' : 'left'}`}></span>
+                  </button>
+                </div>
+                {!isSidebarCollapsed && (
+                  <div className="sidebar-content">
+                    <div className="sidebar-group">
+                      <div className="sidebar-group-header">Integrations</div>
+                      {['Banking', 'Investments', 'Pensions'].map((item) => (
+                        <div key={item} className="sidebar-section">
+                          <div 
+                            className={`sidebar-row-header ${expandedIntegrations[item] ? 'expanded' : ''}`}
+                            onClick={() => setExpandedIntegrations(prev => ({ ...prev, [item]: !prev[item] }))}
+                          >
+                            <span>{item}</span>
+                            <span className="chevron"></span>
+                          </div>
+                          {expandedIntegrations[item] && (
+                            <div className="sidebar-row-details">
+                              <div className="sidebar-detail-item">
+                                <span className="detail-value italic">No active connections</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="sidebar-group">
+                      <div className="sidebar-group-header">Profile</div>
+                      {Object.entries(TABLE_LABELS).map(([table, config]) => (
+                        <div key={table} className="sidebar-section">
+                          <div 
+                            className={`sidebar-row-header ${expandedSections[table] ? 'expanded' : ''}`}
+                            onClick={() => toggleSection(table)}
+                          >
+                            <span>{config.label}</span>
+                            <span className="chevron"></span>
+                          </div>
+                          {expandedSections[table] && (
+                            <div className="sidebar-row-details">
+                              {Object.entries(config.fields).map(([field, label]) => (
+                                <div key={field} className="sidebar-detail-item">
+                                  <span className="detail-label">{label}</span>
+                                  <span className="detail-value">
+                                    {formatValue(sidebarData[table]?.[field])}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {projections && (
               <div className="projections-container">
                 <div className="projections-card">
-                  <h2 className="projections-title">10-Year Simulation</h2>
-                  <div className="projections-table-wrapper">
-                    <table className="projections-table">
-                      <thead>
-                        <tr>
-                          <th>Year</th>
-                          <th>Pension Total</th>
-                          <th>Net Worth</th>
-                          <th>Cash Income</th>
-                          <th>Est. Taxes</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {projections.map((p) => (
-                          <tr key={p.year}>
-                            <td>{p.year}</td>
-                            <td>£{p.pensionTotal.toLocaleString()}</td>
-                            <td>£{p.netWorth.toLocaleString()}</td>
-                            <td>£{p.cashIncome.toLocaleString()}</td>
-                            <td>£{p.taxes.toLocaleString()}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="projections-header">
+                    <h2 className="projections-title">10-Year Simulation</h2>
+                    <div className="view-toggle">
+                      <button 
+                        className={`toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
+                        onClick={() => setViewMode('table')}
+                      >
+                        Table
+                      </button>
+                      <button 
+                        className={`toggle-btn ${viewMode === 'chart' ? 'active' : ''}`}
+                        onClick={() => setViewMode('chart')}
+                      >
+                        Chart
+                      </button>
+                    </div>
                   </div>
+
+                  {viewMode === 'table' ? (
+                    <div className="projections-table-wrapper">
+                      <table className="projections-table">
+                        <thead>
+                          <tr>
+                            <th>Year</th>
+                            <th>Age</th>
+                            <th>Pension Total</th>
+                            <th>Net Worth</th>
+                            <th>Cash Income</th>
+                            <th>Est. Taxes</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {projections.map((p) => (
+                            <tr key={p.year}>
+                              <td>{p.year}</td>
+                              <td>{p.age ?? 'N/A'}</td>
+                              <td>£{p.pensionTotal.toLocaleString()}</td>
+                              <td>£{p.netWorth.toLocaleString()}</td>
+                              <td>£{p.cashIncome.toLocaleString()}</td>
+                              <td>£{p.taxes.toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="projections-chart-wrapper">
+                        <ProjectionChart data={projections} retirementAge={plannedRetirementAge} />
+                      </div>
+                      <div className="chart-legend-bottom">
+                        <div className="legend-item">
+                          <span className="dot pre-retirement"></span>
+                          <span>Pre-retirement</span>
+                        </div>
+                        <div className="legend-item">
+                          <span className="dot post-retirement"></span>
+                          <span>Post-retirement</span>
+                        </div>
+                        <div className="legend-item">
+                          <span className="line income-line"></span>
+                          <span>Annual Income</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
                   <div className="projections-assumptions">
                     <h3>Assumptions:</h3>
                     <ul>

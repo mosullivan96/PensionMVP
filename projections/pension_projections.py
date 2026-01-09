@@ -120,12 +120,20 @@ def run_10_year_projection(user_id: str):
     state_pension = float(data["state"].get("estimated_annual_amount") or 0)
     
     print(f"\n10-Year Projection for User: {user_id}")
-    print("-" * 80)
-    print(f"{'Year':<6} {'Pension':<15} {'Net Worth':<15} {'Cash Income':<15} {'Est. Taxes':<15}")
-    print("-" * 80)
+    print("-" * 90)
+    print(f"{'Year':<6} {'Age':<5} {'Pension':<15} {'Net Worth':<15} {'Cash Income':<15} {'Est. Taxes':<15}")
+    print("-" * 90)
     
+    dob_str = data["user"].get("date_of_birth")
+    current_age = None
+    if dob_str:
+        dob = datetime.strptime(dob_str, "%Y-%m-%d").date()
+        today = date.today()
+        current_age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+
     for i in range(years + 1):
         year = current_year + i
+        age = current_age + i if current_age is not None else "N/A"
         if i > 0:
             current_pension = current_pension * (1 + growth_rate) + annual_contrib
             
@@ -136,9 +144,10 @@ def run_10_year_projection(user_id: str):
         taxable = max(0, cash_income - 12570)
         est_tax = taxable * 0.2
         
-        print(f"{year:<6} £{current_pension:>13,.0f} £{net_worth:>13,.0f} £{cash_income:>13,.0f} £{est_tax:>13,.0f}")
+        age_display = str(age)
+        print(f"{year:<6} {age_display:<5} £{current_pension:>13,.0f} £{net_worth:>13,.0f} £{cash_income:>13,.0f} £{est_tax:>13,.0f}")
     
-    print("-" * 80)
+    print("-" * 90)
     print("Assumptions:")
     print("- Growth: 5%, Inflation: 2.5%")
     print("- No drawdown/annuity products purchased yet")
