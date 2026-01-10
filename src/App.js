@@ -11,6 +11,17 @@ import { Auth } from '@supabase/auth-ui-react';
 import { ThemeSupa } from '@supabase/auth-ui-shared';
 import './App.css';
 
+// Configuration constants
+const GROWTH_RATE = 0.05; // 5% annual investment growth
+const INFLATION_RATE = 0.025; // 2.5% annual inflation
+const PERSONAL_ALLOWANCE = 12570; // UK personal allowance
+const BASIC_TAX_RATE = 0.2; // 20% basic rate
+const DEFAULT_RETIREMENT_AGE = 67;
+const PROJECTION_YEARS = 10;
+
+// Tables that can have multiple records per user
+const MULTI_RECORD_TABLES = ['life_events', 'pension_pots', 'isa_accounts', 'investment_accounts'];
+
 const TABLE_LABELS = {
   pension_pots: {
     label: "Pension Accounts",
@@ -260,27 +271,27 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
           })}
         />
         
-        <AxisRight
-          left={xMax}
-          scale={yIncomeScale}
-          tickFormat={(val) => `£${(val / 1000).toFixed(1)}k`}
-          stroke="#e5e7eb"
-          tickStroke="#e5e7eb"
-          label="Annual Income"
-          labelProps={{
-            fill: "#f59e0b",
-            fontSize: 12,
-            fontWeight: 600,
-            textAnchor: "middle",
-          }}
-          tickLabelProps={() => ({
-            fill: "#f59e0b",
-            fontSize: 10,
-            textAnchor: "start",
-            dx: "0.33em",
-            dy: "0.33em",
-          })}
-        />
+            <AxisRight
+              left={xMax}
+              scale={yIncomeScale}
+              tickFormat={(val) => `£${(val / 1000).toFixed(1)}k`}
+              stroke="#e5e7eb"
+              tickStroke="#e5e7eb"
+              label="Annual State Pension"
+              labelProps={{
+                fill: "#f59e0b",
+                fontSize: 12,
+                fontWeight: 600,
+                textAnchor: "middle",
+              }}
+              tickLabelProps={() => ({
+                fill: "#f59e0b",
+                fontSize: 10,
+                textAnchor: "start",
+                dx: "0.33em",
+                dy: "0.33em",
+              })}
+            />
 
         <AxisBottom
           top={yMax}
@@ -321,13 +332,15 @@ function App() {
   const [showAuth, setShowAuth] = useState(false);
   const [projections, setProjections] = useState(null);
   const [hasSavedData, setHasSavedData] = useState(false);
+  const [lifeEvents, setLifeEvents] = useState([]);
+  const [lastBaseData, setLastBaseData] = useState(null);
   const [viewMode, setViewMode] = useState('table'); // 'table' or 'chart'
   const [sidebarData, setSidebarData] = useState({});
   const [expandedSections, setExpandedSections] = useState({});
   const [expandedIntegrations, setExpandedIntegrations] = useState({});
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [showReset, setShowReset] = useState(false);
-  const [plannedRetirementAge, setPlannedRetirementAge] = useState(67);
+  const [plannedRetirementAge, setPlannedRetirementAge] = useState(DEFAULT_RETIREMENT_AGE);
   const [resetEmail, setResetEmail] = useState('');
   const [resetStatus, setResetStatus] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
@@ -338,10 +351,12 @@ function App() {
   const [passwordUpdateLoading, setPasswordUpdateLoading] = useState(false);
   const messagesEndRef = useRef(null);
   const userSyncingRef = useRef(false);
-  const makeUuid = () =>
+  
+  // Single ID generator function
+  const generateId = () =>
     (typeof crypto !== 'undefined' && crypto.randomUUID)
       ? crypto.randomUUID()
-      : `uuid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   const extractDataPayload = (text) => {
     if (!text) return null;
@@ -352,6 +367,55 @@ function App() {
     } catch (err) {
       console.error('Failed to parse <data> JSON:', err);
       return null;
+    }
+  };
+
+  const extractLifeEvent = (text) => {
+    if (!text) return null;
+    const match = text.match(/<life_event>\s*([\s\S]*?)\s*<\/life_event>/);
+    if (!match || !match[1]) return null;
+    try {
+      return JSON.parse(match[1]);
+    } catch (err) {
+      console.error('Failed to parse <life_event> JSON:', err);
+      return null;
+    }
+  };
+
+  const persistLifeEventData = async (event) => {
+    if (!supabase || !user || !event) return;
+    try {
+      const record = {
+        user_id: user.id,
+        event_name: event.event_name,
+        event_type: event.event_type,
+        event_age: event.event_age,
+        cost: event.cost,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase
+        .from('life_events')
+        .insert(record);
+      
+      if (error) {
+        console.error('Supabase life_events insert error:', error.message);
+      } else {
+        console.info('Supabase life_events insert success');
+        // Refresh sidebar and projections
+        const { data: allEvents } = await supabase
+          .from('life_events')
+          .select('*')
+          .eq('user_id', user.id);
+        
+        if (allEvents) {
+          setLifeEvents(allEvents);
+          calculateProjections(null, allEvents);
+        }
+        fetchSidebarData();
+      }
+    } catch (err) {
+      console.error('Supabase life_events insert failure:', err);
     }
   };
 
@@ -474,16 +538,17 @@ function App() {
     }
   };
 
-  const calculateProjections = (data) => {
-    const years = 10;
+  const calculateProjections = (data, events = []) => {
+    const baseData = data || lastBaseData;
+    if (!baseData) return;
+    
+    if (data) setLastBaseData(data);
     const results = [];
     const currentYear = new Date().getFullYear();
-    const growthRate = 0.05; // 5%
-    const inflationRate = 0.025; // 2.5%
 
     let currentAge = null;
-    if (data.date_of_birth) {
-      const dob = new Date(data.date_of_birth);
+    if (baseData.date_of_birth) {
+      const dob = new Date(baseData.date_of_birth);
       const today = new Date();
       currentAge = today.getFullYear() - dob.getFullYear();
       const m = today.getMonth() - dob.getMonth();
@@ -492,36 +557,49 @@ function App() {
       }
     }
 
-    let currentPension = data.total_pension_value || 0;
-    const monthlyContribution = data.monthly_contribution || 0;
+    let currentPension = baseData.total_pension_value || 0;
+    const monthlyContribution = baseData.monthly_contribution || 0;
     const annualContribution = monthlyContribution * 12;
-    const propertyValue = data.property_value || 0;
-    const totalDebt = data.total_debt || 0;
-    const statePensionAmount = data.state_pension_amount || 0;
+    const propertyValue = baseData.property_value || 0;
+    const totalDebt = baseData.total_debt || 0;
+    const statePensionAmount = baseData.state_pension_amount || 0;
     
-    if (data.planned_retirement_age) {
-      setPlannedRetirementAge(data.planned_retirement_age);
+    if (baseData.planned_retirement_age) {
+      setPlannedRetirementAge(baseData.planned_retirement_age);
     }
 
-    for (let i = 0; i <= years; i++) {
+    for (let i = 0; i <= PROJECTION_YEARS; i++) {
       const year = currentYear + i;
       const age = currentAge !== null ? currentAge + i : null;
       
       // Pension growth
       if (i > 0) {
-        currentPension = currentPension * (1 + growthRate) + annualContribution;
+        currentPension = currentPension * (1 + GROWTH_RATE) + annualContribution;
       }
 
-      // ... existing Net Worth, Cash Income, Taxes calculations ...
+      // Apply Life Events
+      let eventImpact = 0;
+      if (age !== null) {
+        events.forEach(event => {
+          if (Number(event.event_age) === age || Number(event.event_year) === year) {
+            eventImpact += Number(event.cost || 0);
+          }
+        });
+      }
+      
+      // Deduct event cost from pension for simplicity in this MVP
+      currentPension -= eventImpact;
+
       const netWorth = currentPension + propertyValue - totalDebt;
-      const cashIncome = statePensionAmount * Math.pow(1 + inflationRate, i);
-      const taxableIncome = Math.max(0, cashIncome - 12570);
-      const estimatedTax = taxableIncome * 0.2;
+      const cashIncome = statePensionAmount * Math.pow(1 + INFLATION_RATE, i);
+      const taxableIncome = Math.max(0, cashIncome - PERSONAL_ALLOWANCE);
+      const estimatedTax = taxableIncome * BASIC_TAX_RATE;
 
       results.push({
         year,
         age,
         pensionTotal: Math.round(currentPension),
+        pensionContribution: Math.round(annualContribution),
         netWorth: Math.round(netWorth),
         cashIncome: Math.round(cashIncome),
         taxes: Math.round(estimatedTax)
@@ -531,23 +609,43 @@ function App() {
     setHasSavedData(true);
   };
 
+  // Helper to fetch all user data from Supabase tables
+  const fetchAllUserData = async () => {
+    if (!supabase || !user) return null;
+    
+    const results = {};
+    const tablesToFetch = [...Object.keys(TABLE_LABELS), 'users'];
+    
+    for (const table of tablesToFetch) {
+      const userColumn = table === 'spouse_data' ? 'primary_user_id' : 'user_id';
+      const { data, error } = await supabase
+        .from(table)
+        .select('*')
+        .eq(userColumn, user.id);
+      
+      if (error) {
+        console.error(`Error fetching ${table}:`, error.message);
+        continue;
+      }
+      
+      if (data) {
+        results[table] = MULTI_RECORD_TABLES.includes(table) ? data : (data[0] || null);
+      }
+    }
+    
+    return results;
+  };
+
   const fetchSidebarData = async () => {
     if (!supabase || !user) return;
     try {
-      const results = {};
-      const tablesToFetch = [...Object.keys(TABLE_LABELS), 'users'];
-      for (const table of tablesToFetch) {
-        const userColumn = table === 'spouse_data' ? 'primary_user_id' : 'user_id';
-        const { data, error } = await supabase
-          .from(table)
-          .select('*')
-          .eq(userColumn, user.id);
-        
-        if (!error && data) {
-          results[table] = data[0] || null;
-        }
-      }
+      const results = await fetchAllUserData();
+      if (!results) return;
+      
       setSidebarData(results);
+      if (results.life_events) {
+        setLifeEvents(results.life_events);
+      }
     } catch (err) {
       console.error('Error fetching sidebar data:', err);
     }
@@ -561,56 +659,40 @@ function App() {
   };
 
   const handleDashboardClick = async (e) => {
-    console.log('Dashboard clicked');
     if (e) e.preventDefault();
     if (!user || !supabase) {
-      console.log('No user or supabase');
       setShowAuth(true);
       return;
     }
 
     try {
-      const results = {};
-      const tablesToFetch = [...Object.keys(TABLE_LABELS), 'users'];
-      for (const table of tablesToFetch) {
-        console.log(`Fetching from table: ${table}`);
-        const userColumn = table === 'spouse_data' ? 'primary_user_id' : 'user_id';
-        const { data, error } = await supabase
-          .from(table)
-          .select('*')
-          .eq(userColumn, user.id);
-        
-        if (error) {
-          console.error(`Error fetching ${table}:`, error.message);
-        }
-        
-        if (!error && data) {
-          results[table] = data[0] || null;
-        }
-      }
-      console.log('Fetched sidebar data:', results);
+      const results = await fetchAllUserData();
+      if (!results) return;
+      
       setSidebarData(results);
+      if (results.life_events) {
+        setLifeEvents(results.life_events);
+      }
 
       if (results.users || results.pension_pots) {
+        const pots = Array.isArray(results.pension_pots) ? results.pension_pots[0] : results.pension_pots;
         const payload = {
           date_of_birth: results.users?.date_of_birth,
           planned_retirement_age: results.users?.retirement_age,
-          total_pension_value: results.pension_pots?.current_value,
-          monthly_contribution: results.pension_pots?.monthly_contribution,
-          still_contributing: results.pension_pots?.is_active,
+          total_pension_value: pots?.current_value,
+          monthly_contribution: pots?.monthly_contribution,
+          still_contributing: pots?.is_active,
           property_value: results.property?.current_value,
           total_debt: results.liabilities?.current_balance,
           state_pension_amount: results.state_pension?.estimated_annual_amount
         };
 
-        console.log('Calculated payload:', payload);
-
         if (payload.total_pension_value || payload.date_of_birth) {
-          calculateProjections(payload);
+          calculateProjections(payload, results.life_events || []);
           setHasSavedData(true);
           if (messages.length === 0) {
             setMessages([{
-              id: makeId(),
+              id: generateId(),
               role: 'assistant',
               content: 'Welcome back! Here is your latest simulation based on your profile data.'
             }]);
@@ -631,11 +713,6 @@ function App() {
     }
     return val.toString();
   };
-
-  const makeId = () =>
-    (typeof crypto !== 'undefined' && crypto.randomUUID)
-      ? crypto.randomUUID()
-      : `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -769,7 +846,7 @@ function App() {
       return;
     }
 
-    const userMessage = { id: makeId(), role: 'user', content: inputText.trim() };
+    const userMessage = { id: generateId(), role: 'user', content: inputText.trim() };
     setInputText('');
     setIsLoading(true);
 
@@ -799,31 +876,42 @@ function App() {
 
       const data = await response.json();
       const assistantText = data?.content?.[0]?.text || 'No response received.';
-      console.log('Received from Claude:', assistantText);
+      
       const extracted = extractDataPayload(assistantText);
+      const lifeEvent = extractLifeEvent(assistantText);
+
+      if (lifeEvent) {
+        persistLifeEventData(lifeEvent);
+      }
+
       if (extracted) {
-        console.log('Data extracted successfully:', extracted);
         persistUserData(extracted);
         persistPropertyData(extracted);
         persistStatePensionData(extracted);
         persistLiabilitiesData(extracted);
         persistPensionPotData(extracted);
-        calculateProjections(extracted);
+        calculateProjections(extracted, lifeEvents);
         fetchSidebarData();
         const summaryMessage = {
-          id: makeUuid(),
+          id: generateId(),
           role: 'assistant',
           content: 'Perfect, we have all the data we need. Generating Simulation.',
         };
         setMessages((prev) => [...prev, summaryMessage]);
       } else {
-        const assistantMessage = { id: makeUuid(), role: 'assistant', content: assistantText };
+        const assistantMessage = { id: generateId(), role: 'assistant', content: assistantText };
         setMessages((prev) => [...prev, assistantMessage]);
+        
+        // If we just added a life event but didn't have full data extraction, 
+        // refresh projections if they're already showing
+        if (lifeEvent && projections) {
+          fetchSidebarData();
+        }
       }
     } catch (error) {
       console.error('Error calling Claude API:', error);
       const errorMessage = `Error: ${error.message}. Please check your API key and try again.`;
-      setMessages((prev) => [...prev, { id: makeId(), role: 'assistant', content: errorMessage }]);
+      setMessages((prev) => [...prev, { id: generateId(), role: 'assistant', content: errorMessage }]);
     } finally {
       setIsLoading(false);
     }
@@ -974,18 +1062,38 @@ function App() {
                             <span>{config.label}</span>
                             <span className="chevron"></span>
                           </div>
-                          {expandedSections[table] && (
-                            <div className="sidebar-row-details">
-                              {Object.entries(config.fields).map(([field, label]) => (
-                                <div key={field} className="sidebar-detail-item">
-                                  <span className="detail-label">{label}</span>
-                                  <span className="detail-value">
-                                    {formatValue(sidebarData[table]?.[field])}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
+                            {expandedSections[table] && (
+                              <div className="sidebar-row-details">
+                                {Array.isArray(sidebarData[table]) ? (
+                                  sidebarData[table].length > 0 ? (
+                                    sidebarData[table].map((record, index) => (
+                                      <div key={index} className="sidebar-multi-record">
+                                        {Object.entries(config.fields).map(([field, label]) => (
+                                          <div key={field} className="sidebar-detail-item">
+                                            <span className="detail-label">{label}</span>
+                                            <span className="detail-value">{formatValue(record[field])}</span>
+                                          </div>
+                                        ))}
+                                        {index < sidebarData[table].length - 1 && <hr className="record-divider" />}
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <div className="sidebar-detail-item">
+                                      <span className="detail-value italic">Empty</span>
+                                    </div>
+                                  )
+                                ) : (
+                                  Object.entries(config.fields).map(([field, label]) => (
+                                    <div key={field} className="sidebar-detail-item">
+                                      <span className="detail-label">{label}</span>
+                                      <span className="detail-value">
+                                        {formatValue(sidebarData[table]?.[field])}
+                                      </span>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            )}
                         </div>
                       ))}
                     </div>
@@ -1029,8 +1137,9 @@ function App() {
                             <th>Year</th>
                             <th>Age</th>
                             <th>Pension Total</th>
+                            <th>Contribution</th>
                             <th>Net Worth</th>
-                            <th>Cash Income</th>
+                            <th>State Pension</th>
                             <th>Est. Taxes</th>
                           </tr>
                         </thead>
@@ -1040,6 +1149,7 @@ function App() {
                               <td>{p.year}</td>
                               <td>{p.age ?? 'N/A'}</td>
                               <td>£{p.pensionTotal.toLocaleString()}</td>
+                              <td>£{p.pensionContribution?.toLocaleString() ?? '0'}</td>
                               <td>£{p.netWorth.toLocaleString()}</td>
                               <td>£{p.cashIncome.toLocaleString()}</td>
                               <td>£{p.taxes.toLocaleString()}</td>
@@ -1064,7 +1174,7 @@ function App() {
                         </div>
                         <div className="legend-item">
                           <span className="line income-line"></span>
-                          <span>Annual Income</span>
+                          <span>State Pension</span>
                         </div>
                       </div>
                     </>
@@ -1102,10 +1212,10 @@ function App() {
                   <div className="projections-assumptions">
                     <h3>Assumptions:</h3>
                     <ul>
-                      <li>Annual Investment Growth: 5.0%</li>
-                      <li>Annual Inflation: 2.5%</li>
+                      <li>Annual Investment Growth: {(GROWTH_RATE * 100).toFixed(1)}%</li>
+                      <li>Annual Inflation: {(INFLATION_RATE * 100).toFixed(1)}%</li>
                       <li>No drawdown or annuity products purchased yet</li>
-                      <li>Tax calculation: Simple 20% above Personal Allowance</li>
+                      <li>Tax calculation: Simple {(BASIC_TAX_RATE * 100).toFixed(0)}% above Personal Allowance</li>
                     </ul>
                   </div>
                 </div>

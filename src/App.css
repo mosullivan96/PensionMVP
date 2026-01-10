@@ -233,6 +233,16 @@
   color: #9ca3af !important;
 }
 
+.sidebar-multi-record {
+  padding: 4px 0;
+}
+
+.record-divider {
+  border: 0;
+  border-top: 1px solid #f3f4f6;
+  margin: 8px 0;
+}
+
 .sidebar-section {
   margin-bottom: 8px;
   margin-left: 12px;

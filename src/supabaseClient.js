@@ -20,7 +20,7 @@ export const supabase = supabaseUrl && supabaseKey
 
 export const signUp = async (email, password) => {
   if (!supabase) {
-    return { data: null, error: new Error('Supabase not configured.') };
+    return { data: null, error: { message: 'Supabase not configured.' } };
   }
   return supabase.auth.signUp({ email, password });
 };
