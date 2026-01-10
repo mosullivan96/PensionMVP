@@ -156,6 +156,7 @@ def run_10_year_projection(user_id: str):
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1:
+        # main: run projection
         run_10_year_projection(sys.argv[1])
     else:
         print("Please provide a user_id")
