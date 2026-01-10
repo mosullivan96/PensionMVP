@@ -191,8 +191,11 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
   const xMax = width - margin.left - margin.right;
   const yMax = height - margin.top - margin.bottom;
 
-  // Filter to show every 5 years for cleaner display with 30-year projection
-  const displayData = data.filter((d, i) => i % 5 === 0 || i === data.length - 1);
+  // Show all years for granular view
+  const displayData = data;
+  
+  // X-axis labels only show every 5 years to avoid crowding
+  const labelData = data.filter((d, i) => i % 5 === 0 || i === data.length - 1);
 
   const xScale = useMemo(
     () =>
@@ -200,7 +203,7 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
         range: [0, xMax],
         round: true,
         domain: displayData.map((d) => (d.age ? `Age ${d.age}` : d.year.toString())),
-        padding: 0.3,
+        padding: 0.15, // Tighter padding for more bars
       }),
     [xMax, displayData]
   );
@@ -228,7 +231,7 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
   return (
     <svg width={width} height={height}>
       <Group left={margin.left} top={margin.top}>
-        {/* Pension Bars */}
+        {/* Pension Bars - all years */}
         {displayData.map((d) => {
           const label = d.age ? `Age ${d.age}` : d.year.toString();
           const barWidth = xScale.bandwidth();
@@ -246,8 +249,8 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
               width={barWidth}
               height={barHeight}
               fill={isDepleted ? "#ef4444" : isRetired ? "#2563eb" : "#93c5fd"}
-              rx={4}
-              opacity={0.85}
+              rx={2}
+              opacity={0.9}
             />
           );
         })}
@@ -258,20 +261,20 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
           x={(d) => xScale(d.age ? `Age ${d.age}` : d.year.toString()) + xScale.bandwidth() / 2}
           y={(d) => yIncomeScale(d.totalIncome)}
           stroke="#10b981"
-          strokeWidth={3}
+          strokeWidth={2.5}
           curve={curveMonotoneX}
         />
 
-        {/* Income Points */}
-        {displayData.map((d) => (
+        {/* Income Points - only at key milestones to reduce clutter */}
+        {labelData.map((d) => (
           <circle
             key={`point-${d.year}`}
             cx={xScale(d.age ? `Age ${d.age}` : d.year.toString()) + xScale.bandwidth() / 2}
             cy={yIncomeScale(d.totalIncome)}
-            r={5}
+            r={4}
             fill={d.incomeShortfall > 0 ? "#ef4444" : "#10b981"}
             stroke="white"
-            strokeWidth={2}
+            strokeWidth={1.5}
           />
         ))}
 
@@ -322,6 +325,7 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
           scale={xScale}
           stroke="#e5e7eb"
           tickStroke="#e5e7eb"
+          tickValues={labelData.map((d) => (d.age ? `Age ${d.age}` : d.year.toString()))}
           tickLabelProps={() => ({
             fill: "#6b7280",
             fontSize: 10,
@@ -801,10 +805,10 @@ function App() {
   const fetchAllUserData = async () => {
     if (!supabase || !user) return null;
     
-    const results = {};
     const tablesToFetch = [...Object.keys(TABLE_LABELS), 'users'];
     
-    for (const table of tablesToFetch) {
+    // Fetch all tables in parallel for speed
+    const fetchPromises = tablesToFetch.map(async (table) => {
       const userColumn = table === 'spouse_data' ? 'primary_user_id' : 'user_id';
       const { data, error } = await supabase
         .from(table)
@@ -813,13 +817,24 @@ function App() {
       
       if (error) {
         console.error(`Error fetching ${table}:`, error.message);
-        continue;
+        return { table, data: null };
       }
       
-      if (data) {
-        results[table] = MULTI_RECORD_TABLES.includes(table) ? data : (data[0] || null);
+      return { 
+        table, 
+        data: MULTI_RECORD_TABLES.includes(table) ? data : (data[0] || null) 
+      };
+    });
+    
+    const fetchResults = await Promise.all(fetchPromises);
+    
+    // Convert array of results to object
+    const results = {};
+    fetchResults.forEach(({ table, data }) => {
+      if (data !== null) {
+        results[table] = data;
       }
-    }
+    });
     
     return results;
   };
@@ -1240,6 +1255,11 @@ When the user mentions a life event:
           {user && hasSavedData && (
             <a href="#dashboard" onClick={handleDashboardClick}>
               Dashboard
+            </a>
+          )}
+          {user && hasSavedData && (
+            <a href="#scenarios">
+              Scenario Modelling
             </a>
           )}
           <a href="#documentation">Documentation</a>
