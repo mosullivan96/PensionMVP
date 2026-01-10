@@ -377,6 +377,7 @@ function App() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordUpdateStatus, setPasswordUpdateStatus] = useState('');
   const [passwordUpdateLoading, setPasswordUpdateLoading] = useState(false);
+  const [showScenarios, setShowScenarios] = useState(false);
   const messagesEndRef = useRef(null);
   const userSyncingRef = useRef(false);
   
@@ -863,6 +864,7 @@ function App() {
 
   const handleDashboardClick = async (e) => {
     if (e) e.preventDefault();
+    setShowScenarios(false); // Close scenario view if open
     if (!user || !supabase) {
       setShowAuth(true);
       return;
@@ -1228,6 +1230,7 @@ When the user mentions a life event:
     setIsLoading(false);
     setProjections(null);
     setSidebarData({});
+    setShowScenarios(false);
   };
 
   const handleLogout = async () => {
@@ -1258,7 +1261,7 @@ When the user mentions a life event:
             </a>
           )}
           {user && hasSavedData && (
-            <a href="#scenarios">
+            <a href="#scenarios" onClick={(e) => { e.preventDefault(); setShowScenarios(true); }}>
               Scenario Modelling
             </a>
           )}
@@ -1282,6 +1285,27 @@ When the user mentions a life event:
         </nav>
       </header>
 
+      {showScenarios ? (
+        <main className="main scenario-view">
+          <div className="scenario-container">
+            <div className="scenario-card">
+              <div className="scenario-header">
+                <h1>Scenario Modelling</h1>
+                <button 
+                  className="scenario-close" 
+                  onClick={() => setShowScenarios(false)}
+                >
+                  ← Back to Dashboard
+                </button>
+              </div>
+              <div className="scenario-content">
+                <h2>Hello World</h2>
+                <p>Scenario modelling feature coming soon...</p>
+              </div>
+            </div>
+          </div>
+        </main>
+      ) : (
       <main className={`main ${hasConversation ? 'has-chat' : 'landing'}`}>
         {!hasConversation ? (
           <div className="landing-container">
@@ -1629,6 +1653,7 @@ When the user mentions a life event:
           </div>
         )}
       </main>
+      )}
 
       {showAuth && (
         <div className="modal-backdrop">
