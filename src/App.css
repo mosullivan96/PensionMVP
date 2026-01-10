@@ -313,6 +313,30 @@
   font-weight: 500;
 }
 
+.detail-value.italic {
+  font-style: italic;
+  color: #9ca3af;
+  font-weight: 400;
+}
+
+.connect-btn {
+  margin-top: 10px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.connect-btn:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
 .projections-container {
   flex: 1;
   min-width: 0;
@@ -455,10 +479,14 @@
   background: #2563eb;
 }
 
+.dot.depleted {
+  background: #ef4444;
+}
+
 .line.income-line {
   width: 20px;
   height: 3px;
-  background: #f59e0b;
+  background: #10b981;
   border-radius: 2px;
 }
 
@@ -491,9 +519,137 @@
   border-bottom: none;
 }
 
+/* Enhanced projection table styles */
+.projections-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  background: #f9fafb;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.projections-table td {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.retirement-row {
+  background-color: rgba(37, 99, 235, 0.04);
+}
+
+.retirement-row:hover {
+  background-color: rgba(37, 99, 235, 0.08);
+}
+
+.retirement-row.first-retirement td {
+  border-top: 3px solid #2563eb;
+}
+
+.depleted-row {
+  background-color: rgba(239, 68, 68, 0.08);
+}
+
+.depleted-row td {
+  color: #991b1b;
+}
+
+.phase-cell {
+  text-align: center;
+  font-size: 16px;
+}
+
+.phase-cell.working {
+  opacity: 0.7;
+}
+
+.phase-cell.retired {
+  opacity: 1;
+}
+
+.growth-cell {
+  color: #059669;
+  font-weight: 500;
+}
+
+.drawdown-cell {
+  color: #dc2626;
+  font-weight: 500;
+}
+
+.income-cell {
+  font-weight: 600;
+  color: #059669;
+}
+
+.tax-cell {
+  color: #6b7280;
+}
+
+.net-income-cell {
+  font-weight: 600;
+  color: #111827;
+}
+
+.net-worth-cell {
+  font-weight: 700;
+  color: #1e40af;
+}
+
+.warning {
+  color: #dc2626 !important;
+  font-weight: 600;
+}
+
+.lump-sum-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 2px 6px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #059669;
+  background: #d1fae5;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+.shortfall-badge {
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.events-cell {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.event-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: help;
+}
+
+.event-badge.expense {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.event-badge.windfall {
+  background: #d1fae5;
+  color: #065f46;
+}
+
 .projections-assumptions {
-  border-top: 1px solid #f3f4f6;
-  padding-top: 20px;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .projections-assumptions h3 {

@@ -11,13 +11,26 @@ import { Auth } from '@supabase/auth-ui-react';
 import { ThemeSupa } from '@supabase/auth-ui-shared';
 import './App.css';
 
-// Configuration constants
-const GROWTH_RATE = 0.05; // 5% annual investment growth
-const INFLATION_RATE = 0.025; // 2.5% annual inflation
-const PERSONAL_ALLOWANCE = 12570; // UK personal allowance
-const BASIC_TAX_RATE = 0.2; // 20% basic rate
+// Configuration constants - UK 2024/25 tax year
+const GROWTH_RATE_ACCUMULATION = 0.05; // 5% growth while accumulating (more aggressive)
+const GROWTH_RATE_DRAWDOWN = 0.04; // 4% growth in retirement (more conservative)
+const INFLATION_RATE = 0.025; // 2.5% annual inflation (BoE target)
+const STATE_PENSION_AGE = 67; // UK state pension age (born after 1960)
+const FULL_STATE_PENSION = 11502; // Full new state pension 2024/25
+
+// UK Income Tax Bands 2024/25
+const PERSONAL_ALLOWANCE = 12570;
+const BASIC_RATE_THRESHOLD = 50270;
+const HIGHER_RATE_THRESHOLD = 125140;
+const BASIC_TAX_RATE = 0.20;
+const HIGHER_TAX_RATE = 0.40;
+const ADDITIONAL_TAX_RATE = 0.45;
+
+// Pension rules
+const TAX_FREE_LUMP_SUM_RATE = 0.25; // 25% tax-free at crystallisation
 const DEFAULT_RETIREMENT_AGE = 67;
-const PROJECTION_YEARS = 10;
+const PROJECTION_YEARS = 30; // Extended to 30 years for better planning
+const LIFE_EXPECTANCY = 90; // Plan to age 90
 
 // Tables that can have multiple records per user
 const MULTI_RECORD_TABLES = ['life_events', 'pension_pots', 'isa_accounts', 'investment_accounts'];
@@ -174,19 +187,22 @@ const TABLE_LABELS = {
 };
 
 const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
-  const margin = { top: 20, right: 60, bottom: 60, left: 60 };
+  const margin = { top: 20, right: 70, bottom: 60, left: 70 };
   const xMax = width - margin.left - margin.right;
   const yMax = height - margin.top - margin.bottom;
+
+  // Filter to show every 5 years for cleaner display with 30-year projection
+  const displayData = data.filter((d, i) => i % 5 === 0 || i === data.length - 1);
 
   const xScale = useMemo(
     () =>
       scaleBand({
         range: [0, xMax],
         round: true,
-        domain: data.map((d) => (d.age ? `Age ${d.age}` : d.year.toString())),
-        padding: 0.4,
+        domain: displayData.map((d) => (d.age ? `Age ${d.age}` : d.year.toString())),
+        padding: 0.3,
       }),
-    [xMax, data]
+    [xMax, displayData]
   );
 
   const yScale = useMemo(
@@ -204,7 +220,7 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
       scaleLinear({
         range: [yMax, 0],
         round: true,
-        domain: [0, Math.max(...data.map((d) => d.cashIncome), 10000) * 1.2],
+        domain: [0, Math.max(...data.map((d) => d.totalIncome), 10000) * 1.2],
       }),
     [yMax, data]
   );
@@ -213,13 +229,14 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
     <svg width={width} height={height}>
       <Group left={margin.left} top={margin.top}>
         {/* Pension Bars */}
-        {data.map((d) => {
+        {displayData.map((d) => {
           const label = d.age ? `Age ${d.age}` : d.year.toString();
           const barWidth = xScale.bandwidth();
           const barHeight = yMax - yScale(d.pensionTotal);
           const barX = xScale(label);
           const barY = yMax - barHeight;
-          const isRetired = d.age >= retirementAge;
+          const isRetired = d.phase === 'Retirement';
+          const isDepleted = d.fundsDepleted;
 
           return (
             <VisxBar
@@ -228,31 +245,31 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
               y={barY}
               width={barWidth}
               height={barHeight}
-              fill={isRetired ? "#2563eb" : "#93c5fd"}
+              fill={isDepleted ? "#ef4444" : isRetired ? "#2563eb" : "#93c5fd"}
               rx={4}
-              opacity={0.8}
+              opacity={0.85}
             />
           );
         })}
 
-        {/* Income Line Overlay */}
+        {/* Total Income Line Overlay */}
         <LinePath
-          data={data}
+          data={displayData}
           x={(d) => xScale(d.age ? `Age ${d.age}` : d.year.toString()) + xScale.bandwidth() / 2}
-          y={(d) => yIncomeScale(d.cashIncome)}
-          stroke="#f59e0b"
+          y={(d) => yIncomeScale(d.totalIncome)}
+          stroke="#10b981"
           strokeWidth={3}
           curve={curveMonotoneX}
         />
 
         {/* Income Points */}
-        {data.map((d) => (
+        {displayData.map((d) => (
           <circle
             key={`point-${d.year}`}
             cx={xScale(d.age ? `Age ${d.age}` : d.year.toString()) + xScale.bandwidth() / 2}
-            cy={yIncomeScale(d.cashIncome)}
-            r={4}
-            fill="#f59e0b"
+            cy={yIncomeScale(d.totalIncome)}
+            r={5}
+            fill={d.incomeShortfall > 0 ? "#ef4444" : "#10b981"}
             stroke="white"
             strokeWidth={2}
           />
@@ -263,6 +280,13 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
           tickFormat={(val) => `£${(val / 1000).toFixed(0)}k`}
           stroke="#e5e7eb"
           tickStroke="#e5e7eb"
+          label="Pension Pot"
+          labelProps={{
+            fill: "#2563eb",
+            fontSize: 11,
+            fontWeight: 600,
+            textAnchor: "middle",
+          }}
           tickLabelProps={() => ({
             fill: "#6b7280",
             fontSize: 10,
@@ -271,27 +295,27 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
           })}
         />
         
-            <AxisRight
-              left={xMax}
-              scale={yIncomeScale}
-              tickFormat={(val) => `£${(val / 1000).toFixed(1)}k`}
-              stroke="#e5e7eb"
-              tickStroke="#e5e7eb"
-              label="Annual State Pension"
-              labelProps={{
-                fill: "#f59e0b",
-                fontSize: 12,
-                fontWeight: 600,
-                textAnchor: "middle",
-              }}
-              tickLabelProps={() => ({
-                fill: "#f59e0b",
-                fontSize: 10,
-                textAnchor: "start",
-                dx: "0.33em",
-                dy: "0.33em",
-              })}
-            />
+        <AxisRight
+          left={xMax}
+          scale={yIncomeScale}
+          tickFormat={(val) => `£${(val / 1000).toFixed(0)}k`}
+          stroke="#e5e7eb"
+          tickStroke="#e5e7eb"
+          label="Total Income"
+          labelProps={{
+            fill: "#10b981",
+            fontSize: 11,
+            fontWeight: 600,
+            textAnchor: "middle",
+          }}
+          tickLabelProps={() => ({
+            fill: "#10b981",
+            fontSize: 10,
+            textAnchor: "start",
+            dx: "0.33em",
+            dy: "0.33em",
+          })}
+        />
 
         <AxisBottom
           top={yMax}
@@ -386,6 +410,7 @@ function App() {
     if (!supabase || !user || !event) return;
     try {
       const record = {
+        event_id: generateId(),
         user_id: user.id,
         event_name: event.event_name,
         event_type: event.event_type,
@@ -538,6 +563,44 @@ function App() {
     }
   };
 
+  // Calculate UK income tax using progressive bands
+  const calculateUKTax = (totalIncome) => {
+    if (totalIncome <= PERSONAL_ALLOWANCE) return 0;
+    
+    let tax = 0;
+    let remainingIncome = totalIncome;
+    
+    // Personal allowance tapering (£1 lost for every £2 over £100k)
+    let effectiveAllowance = PERSONAL_ALLOWANCE;
+    if (totalIncome > 100000) {
+      effectiveAllowance = Math.max(0, PERSONAL_ALLOWANCE - (totalIncome - 100000) / 2);
+    }
+    
+    remainingIncome -= effectiveAllowance;
+    if (remainingIncome <= 0) return 0;
+    
+    // Basic rate band (£12,571 to £50,270)
+    const basicBand = Math.min(remainingIncome, BASIC_RATE_THRESHOLD - PERSONAL_ALLOWANCE);
+    if (basicBand > 0) {
+      tax += basicBand * BASIC_TAX_RATE;
+      remainingIncome -= basicBand;
+    }
+    
+    // Higher rate band (£50,271 to £125,140)
+    const higherBand = Math.min(remainingIncome, HIGHER_RATE_THRESHOLD - BASIC_RATE_THRESHOLD);
+    if (higherBand > 0) {
+      tax += higherBand * HIGHER_TAX_RATE;
+      remainingIncome -= higherBand;
+    }
+    
+    // Additional rate (over £125,140)
+    if (remainingIncome > 0) {
+      tax += remainingIncome * ADDITIONAL_TAX_RATE;
+    }
+    
+    return tax;
+  };
+
   const calculateProjections = (data, events = []) => {
     const baseData = data || lastBaseData;
     if (!baseData) return;
@@ -546,6 +609,7 @@ function App() {
     const results = [];
     const currentYear = new Date().getFullYear();
 
+    // Calculate current age
     let currentAge = null;
     if (baseData.date_of_birth) {
       const dob = new Date(baseData.date_of_birth);
@@ -557,54 +621,178 @@ function App() {
       }
     }
 
-    let currentPension = baseData.total_pension_value || 0;
+    // Base values
+    let pensionPot = baseData.total_pension_value || 0;
     const monthlyContribution = baseData.monthly_contribution || 0;
     const annualContribution = monthlyContribution * 12;
     const propertyValue = baseData.property_value || 0;
-    const totalDebt = baseData.total_debt || 0;
-    const statePensionAmount = baseData.state_pension_amount || 0;
+    let mortgageBalance = baseData.total_debt || 0;
+    const statePensionBase = baseData.state_pension_amount || FULL_STATE_PENSION;
+    const annualIncomeNeeded = baseData.annual_income_needed || 25000;
+    const retirementAge = baseData.planned_retirement_age || DEFAULT_RETIREMENT_AGE;
+    const lumpSumTaken = baseData.lump_sum_taken || false;
+    const stillContributing = baseData.still_contributing !== false;
     
-    if (baseData.planned_retirement_age) {
-      setPlannedRetirementAge(baseData.planned_retirement_age);
+    if (retirementAge) {
+      setPlannedRetirementAge(retirementAge);
     }
+
+    // Track cumulative values
+    let hasRetired = false;
+    let hasTakenLumpSum = lumpSumTaken;
+    let taxFreeCashReceived = 0;
+    let cumulativeDrawdown = 0;
+    let fundsDepleted = false;
+    let depletionAge = null;
+    
+    // Estimate years to mortgage payoff (assume 25 year mortgage, 4% rate)
+    const mortgageMonthlyPayment = mortgageBalance > 0 ? (mortgageBalance * 0.04 / 12) / (1 - Math.pow(1 + 0.04/12, -300)) : 0;
 
     for (let i = 0; i <= PROJECTION_YEARS; i++) {
       const year = currentYear + i;
       const age = currentAge !== null ? currentAge + i : null;
       
-      // Pension growth
-      if (i > 0) {
-        currentPension = currentPension * (1 + GROWTH_RATE) + annualContribution;
+      // Determine phase
+      const isRetired = age !== null && age >= retirementAge;
+      const isStatePensionAge = age !== null && age >= STATE_PENSION_AGE;
+      const justRetired = isRetired && !hasRetired;
+      hasRetired = isRetired;
+      
+      // Growth rate depends on phase
+      const growthRate = isRetired ? GROWTH_RATE_DRAWDOWN : GROWTH_RATE_ACCUMULATION;
+      
+      // Start of year pension value
+      const pensionStartOfYear = pensionPot;
+      
+      // Investment growth (applied to pension pot)
+      let investmentGrowth = 0;
+      if (i > 0 && !fundsDepleted) {
+        investmentGrowth = pensionPot * growthRate;
+        pensionPot += investmentGrowth;
       }
-
+      
+      // Contributions (only if working and still contributing)
+      let yearContribution = 0;
+      if (!isRetired && stillContributing) {
+        yearContribution = annualContribution;
+        pensionPot += yearContribution;
+      }
+      
+      // Tax-free lump sum at retirement (25%)
+      let lumpSumThisYear = 0;
+      if (justRetired && !hasTakenLumpSum && pensionPot > 0) {
+        lumpSumThisYear = pensionPot * TAX_FREE_LUMP_SUM_RATE;
+        pensionPot -= lumpSumThisYear;
+        taxFreeCashReceived = lumpSumThisYear;
+        hasTakenLumpSum = true;
+      }
+      
+      // State pension (inflation-adjusted, only after state pension age)
+      const statePensionThisYear = isStatePensionAge 
+        ? statePensionBase * Math.pow(1 + INFLATION_RATE, i) 
+        : 0;
+      
+      // Calculate income needed (inflation-adjusted)
+      const incomeNeededThisYear = isRetired 
+        ? annualIncomeNeeded * Math.pow(1 + INFLATION_RATE, i)
+        : 0;
+      
+      // Calculate drawdown needed from pension to meet income target
+      let pensionDrawdown = 0;
+      let incomeShortfall = 0;
+      if (isRetired && !fundsDepleted) {
+        const incomeGap = Math.max(0, incomeNeededThisYear - statePensionThisYear);
+        if (incomeGap > 0) {
+          if (pensionPot >= incomeGap) {
+            pensionDrawdown = incomeGap;
+            pensionPot -= pensionDrawdown;
+            cumulativeDrawdown += pensionDrawdown;
+          } else {
+            // Funds running low - take what's left
+            pensionDrawdown = pensionPot;
+            incomeShortfall = incomeGap - pensionPot;
+            pensionPot = 0;
+            fundsDepleted = true;
+            if (!depletionAge) depletionAge = age;
+          }
+        }
+      }
+      
       // Apply Life Events
-      let eventImpact = 0;
+      let lifeEventCost = 0;
+      let lifeEventNames = [];
       if (age !== null) {
         events.forEach(event => {
           if (Number(event.event_age) === age || Number(event.event_year) === year) {
-            eventImpact += Number(event.cost || 0);
+            const cost = Number(event.cost || 0);
+            lifeEventCost += cost;
+            lifeEventNames.push(event.event_name);
           }
         });
       }
       
-      // Deduct event cost from pension for simplicity in this MVP
-      currentPension -= eventImpact;
-
-      const netWorth = currentPension + propertyValue - totalDebt;
-      const cashIncome = statePensionAmount * Math.pow(1 + INFLATION_RATE, i);
-      const taxableIncome = Math.max(0, cashIncome - PERSONAL_ALLOWANCE);
-      const estimatedTax = taxableIncome * BASIC_TAX_RATE;
+      // Deduct life event costs (positive = expense, negative = windfall)
+      if (lifeEventCost !== 0) {
+        if (lifeEventCost > 0) {
+          // Expense - deduct from pension pot
+          pensionPot = Math.max(0, pensionPot - lifeEventCost);
+        } else {
+          // Windfall - add to pension pot
+          pensionPot -= lifeEventCost; // Negative cost = addition
+        }
+      }
+      
+      // Mortgage paydown (simple linear for now)
+      const mortgagePayment = Math.min(mortgageBalance, mortgageMonthlyPayment * 12);
+      mortgageBalance = Math.max(0, mortgageBalance - (mortgageMonthlyPayment * 12 * 0.3)); // ~30% goes to principal
+      
+      // Total income this year
+      const totalIncome = statePensionThisYear + pensionDrawdown + lumpSumThisYear;
+      
+      // Tax calculation (lump sum is tax-free, drawdown and state pension are taxable)
+      const taxableIncome = statePensionThisYear + pensionDrawdown;
+      const taxPaid = calculateUKTax(taxableIncome);
+      
+      // Net income after tax
+      const netIncome = totalIncome - taxPaid;
+      
+      // Property equity (value minus remaining mortgage)
+      const propertyEquity = propertyValue > 0 
+        ? propertyValue * Math.pow(1.03, i) - mortgageBalance // 3% property growth
+        : 0;
+      
+      // Total net worth
+      const netWorth = pensionPot + propertyEquity + taxFreeCashReceived;
 
       results.push({
         year,
         age,
-        pensionTotal: Math.round(currentPension),
-        pensionContribution: Math.round(annualContribution),
+        phase: isRetired ? 'Retirement' : 'Accumulation',
+        pensionStart: Math.round(pensionStartOfYear),
+        pensionTotal: Math.round(pensionPot),
+        pensionContribution: Math.round(yearContribution),
+        investmentGrowth: Math.round(investmentGrowth),
+        pensionDrawdown: Math.round(pensionDrawdown),
+        lumpSum: Math.round(lumpSumThisYear),
+        statePension: Math.round(statePensionThisYear),
+        totalIncome: Math.round(totalIncome),
+        taxes: Math.round(taxPaid),
+        netIncome: Math.round(netIncome),
+        incomeNeeded: Math.round(incomeNeededThisYear),
+        incomeShortfall: Math.round(incomeShortfall),
+        propertyEquity: Math.round(propertyEquity),
         netWorth: Math.round(netWorth),
-        cashIncome: Math.round(cashIncome),
-        taxes: Math.round(estimatedTax)
+        lifeEvents: lifeEventNames.join(', ') || null,
+        lifeEventCost: Math.round(lifeEventCost),
+        fundsDepleted
       });
     }
+    
+    // Add summary stats
+    if (depletionAge) {
+      console.info(`Warning: Funds projected to deplete at age ${depletionAge}`);
+    }
+    
     setProjections(results);
     setHasSavedData(true);
   };
@@ -839,6 +1027,79 @@ function App() {
     }
   };
 
+  // Build financial context for Claude when projections exist
+  const buildFinancialContext = () => {
+    if (!projections || projections.length === 0) return null;
+    
+    const currentYear = new Date().getFullYear();
+    const currentAge = projections[0]?.age;
+    const retirementProjection = projections.find(p => p.age === plannedRetirementAge);
+    const statePensionStartProjection = projections.find(p => p.age === STATE_PENSION_AGE);
+    const finalProjection = projections[projections.length - 1];
+    const depletedYear = projections.find(p => p.fundsDepleted);
+    
+    // Build key milestone summary
+    const milestones = projections
+      .filter((p, i) => 
+        i === 0 || 
+        p.age === plannedRetirementAge || 
+        p.age === STATE_PENSION_AGE ||
+        i === projections.length - 1
+      )
+      .map(p => `Age ${p.age} (${p.year}): Pension £${p.pensionTotal.toLocaleString()}, Income £${p.totalIncome.toLocaleString()}/yr, Net Worth £${p.netWorth.toLocaleString()}`)
+      .join('\n');
+    
+    // Existing life events summary
+    const eventsText = lifeEvents.length > 0
+      ? lifeEvents.map(e => `- ${e.event_name}: £${Math.abs(e.cost).toLocaleString()} ${e.cost > 0 ? 'expense' : 'windfall'} at age ${e.event_age}`).join('\n')
+      : 'None yet';
+    
+    const depletionWarning = depletedYear 
+      ? `⚠️ WARNING: Funds projected to deplete at age ${depletedYear.age} (${depletedYear.year})`
+      : 'Funds projected to last through simulation period';
+    
+    return `[FINANCIAL CONTEXT - Use this to inform your responses, do not repeat verbatim]
+Current Age: ${currentAge}
+Planned Retirement Age: ${plannedRetirementAge}
+State Pension Age: ${STATE_PENSION_AGE}
+Years Until Retirement: ${Math.max(0, plannedRetirementAge - currentAge)}
+
+CURRENT FINANCIAL SNAPSHOT:
+- Current Pension Pot: £${projections[0]?.pensionTotal.toLocaleString()}
+- Annual Contribution: £${projections[0]?.pensionContribution.toLocaleString()}
+- Current Net Worth: £${projections[0]?.netWorth.toLocaleString()}
+- Phase: ${projections[0]?.phase}
+
+AT RETIREMENT (Age ${plannedRetirementAge}):
+- Projected Pension Pot: £${retirementProjection?.pensionTotal.toLocaleString() || 'N/A'}
+- Tax-Free Lump Sum Available: £${retirementProjection ? Math.round(retirementProjection.pensionTotal * 0.25).toLocaleString() : 'N/A'}
+- Remaining After Lump Sum: £${retirementProjection ? Math.round(retirementProjection.pensionTotal * 0.75).toLocaleString() : 'N/A'}
+
+STATE PENSION (Age ${STATE_PENSION_AGE}):
+- Annual State Pension: £${statePensionStartProjection?.statePension.toLocaleString() || 'N/A'}
+
+END OF PROJECTION (Age ${finalProjection?.age}):
+- Final Pension Pot: £${finalProjection?.pensionTotal.toLocaleString()}
+- Final Net Worth: £${finalProjection?.netWorth.toLocaleString()}
+- ${depletionWarning}
+
+KEY MILESTONES:
+${milestones}
+
+EXISTING LIFE EVENTS:
+${eventsText}
+
+PROJECTION WINDOW: Age ${currentAge} to Age ${finalProjection?.age}
+
+When the user mentions a life event:
+- Validate age is within ${currentAge} to ${finalProjection?.age}
+- Reference specific pension/net worth values at the mentioned age
+- Explain impact on retirement sustainability
+[END CONTEXT]
+
+`;
+  };
+
   const sendMessage = async () => {
     if (!inputText.trim() || isLoading) return;
     if (!user) {
@@ -854,13 +1115,25 @@ function App() {
     setMessages(nextMessages);
     logPrompt(userMessage.content);
 
+    // Build messages for API - inject financial context if projections exist
+    const financialContext = buildFinancialContext();
+    const apiMessages = financialContext
+      ? nextMessages.map((msg, index) => {
+          // Prepend context to the latest user message only
+          if (index === nextMessages.length - 1 && msg.role === 'user') {
+            return { ...msg, content: financialContext + msg.content };
+          }
+          return msg;
+        })
+      : nextMessages;
+
     try {
       const response = await fetch('http://localhost:3001/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ messages: nextMessages })
+        body: JSON.stringify({ messages: apiMessages })
       });
 
       if (!response.ok) {
@@ -899,7 +1172,17 @@ function App() {
         };
         setMessages((prev) => [...prev, summaryMessage]);
       } else {
-        const assistantMessage = { id: generateId(), role: 'assistant', content: assistantText };
+        // Strip any <life_event> tags from the displayed message
+        let displayText = assistantText;
+        if (lifeEvent) {
+          displayText = assistantText.replace(/<life_event>\s*[\s\S]*?\s*<\/life_event>/g, '').trim();
+          // If no text remains after stripping, show a friendly message
+          if (!displayText) {
+            displayText = `Got it! I've added "${lifeEvent.event_name}" at age ${lifeEvent.event_age} to your simulation.`;
+          }
+        }
+        
+        const assistantMessage = { id: generateId(), role: 'assistant', content: displayText };
         setMessages((prev) => [...prev, assistantMessage]);
         
         // If we just added a life event but didn't have full data extraction, 
@@ -1011,7 +1294,7 @@ function App() {
                 >
                   Enter
                 </button>
-              </div>
+    </div>
             </div>
           </div>
         ) : (
@@ -1045,6 +1328,9 @@ function App() {
                               <div className="sidebar-detail-item">
                                 <span className="detail-value italic">No active connections</span>
                               </div>
+                              <button className="connect-btn" onClick={(e) => e.stopPropagation()}>
+                                Connect
+                              </button>
                             </div>
                           )}
                         </div>
@@ -1129,6 +1415,20 @@ function App() {
                     </div>
                   </div>
 
+                  <div className="projections-assumptions">
+                    <h3>Key Assumptions (UK 2024/25):</h3>
+                    <ul>
+                      <li>Growth during accumulation: {(GROWTH_RATE_ACCUMULATION * 100).toFixed(0)}% p.a.</li>
+                      <li>Growth during drawdown: {(GROWTH_RATE_DRAWDOWN * 100).toFixed(0)}% p.a.</li>
+                      <li>Inflation: {(INFLATION_RATE * 100).toFixed(1)}% p.a. (BoE target)</li>
+                      <li>State Pension Age: {STATE_PENSION_AGE}</li>
+                      <li>Full State Pension: £{FULL_STATE_PENSION.toLocaleString()}/year</li>
+                      <li>Tax-Free Lump Sum: {(TAX_FREE_LUMP_SUM_RATE * 100).toFixed(0)}% at retirement</li>
+                      <li>Property growth: 3% p.a.</li>
+                      <li>Planning horizon: Age 90</li>
+                    </ul>
+                  </div>
+
                   {viewMode === 'table' ? (
                     <div className="projections-table-wrapper">
                       <table className="projections-table">
@@ -1136,25 +1436,67 @@ function App() {
                           <tr>
                             <th>Year</th>
                             <th>Age</th>
-                            <th>Pension Total</th>
-                            <th>Contribution</th>
-                            <th>Net Worth</th>
+                            <th>Pension Pot</th>
+                            <th>Growth</th>
+                            <th>Contrib.</th>
+                            <th>Drawdown</th>
                             <th>State Pension</th>
-                            <th>Est. Taxes</th>
+                            <th>Total Income</th>
+                            <th>Tax</th>
+                            <th>Net Income</th>
+                            <th>Net Worth</th>
+                            <th>Events</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {projections.map((p) => (
-                            <tr key={p.year}>
+                          {projections.map((p, idx) => {
+                            const isFirstRetirement = p.phase === 'Retirement' && (idx === 0 || projections[idx - 1]?.phase !== 'Retirement');
+                            return (
+                            <tr 
+                              key={p.year} 
+                              className={`${p.phase === 'Retirement' ? 'retirement-row' : ''} ${isFirstRetirement ? 'first-retirement' : ''} ${p.fundsDepleted ? 'depleted-row' : ''}`}
+                            >
                               <td>{p.year}</td>
                               <td>{p.age ?? 'N/A'}</td>
-                              <td>£{p.pensionTotal.toLocaleString()}</td>
-                              <td>£{p.pensionContribution?.toLocaleString() ?? '0'}</td>
-                              <td>£{p.netWorth.toLocaleString()}</td>
-                              <td>£{p.cashIncome.toLocaleString()}</td>
-                              <td>£{p.taxes.toLocaleString()}</td>
+                              <td className={p.fundsDepleted ? 'warning' : ''}>
+                                £{p.pensionTotal.toLocaleString()}
+                              </td>
+                              <td className="growth-cell">
+                                {p.investmentGrowth > 0 ? `+£${p.investmentGrowth.toLocaleString()}` : '—'}
+                              </td>
+                              <td>
+                                {p.pensionContribution > 0 ? `+£${p.pensionContribution.toLocaleString()}` : '—'}
+                              </td>
+                              <td className="drawdown-cell">
+                                {p.pensionDrawdown > 0 ? `-£${p.pensionDrawdown.toLocaleString()}` : '—'}
+                              </td>
+                              <td>
+                                {p.statePension > 0 ? `£${p.statePension.toLocaleString()}` : '—'}
+                              </td>
+                              <td className="income-cell">
+                                £{p.totalIncome.toLocaleString()}
+                                {p.lumpSum > 0 && <span className="lump-sum-badge" title="Tax-free lump sum">+TFC</span>}
+                              </td>
+                              <td className="tax-cell">
+                                £{p.taxes.toLocaleString()}
+                              </td>
+                              <td className={p.incomeShortfall > 0 ? 'warning' : 'net-income-cell'}>
+                                £{p.netIncome.toLocaleString()}
+                                {p.incomeShortfall > 0 && <span className="shortfall-badge" title={`Shortfall: £${p.incomeShortfall.toLocaleString()}`}>⚠️</span>}
+                              </td>
+                              <td className="net-worth-cell">
+                                £{p.netWorth.toLocaleString()}
+                              </td>
+                              <td className="events-cell">
+                                {p.lifeEvents ? (
+                                  <span className={`event-badge ${p.lifeEventCost > 0 ? 'expense' : 'windfall'}`} title={`£${Math.abs(p.lifeEventCost).toLocaleString()}`}>
+                                    {p.lifeEvents}
+                                  </span>
+                                ) : '—'}
+                              </td>
                             </tr>
-                          ))}
+                          );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -1166,58 +1508,62 @@ function App() {
                       <div className="chart-legend-bottom">
                         <div className="legend-item">
                           <span className="dot pre-retirement"></span>
-                          <span>Pre-retirement</span>
+                          <span>Accumulation Phase</span>
                         </div>
                         <div className="legend-item">
                           <span className="dot post-retirement"></span>
-                          <span>Post-retirement</span>
+                          <span>Retirement Phase</span>
+                        </div>
+                        <div className="legend-item">
+                          <span className="dot depleted"></span>
+                          <span>Funds Depleted</span>
                         </div>
                         <div className="legend-item">
                           <span className="line income-line"></span>
-                          <span>State Pension</span>
+                          <span>Total Income</span>
                         </div>
                       </div>
                     </>
                   ) : (
                     <div className="projections-guidance-wrapper">
                       <div className="guidance-content">
-                        <h3>Understanding Your Projection</h3>
-                        <p>This 10-year simulation provides a high-level overview of your potential financial trajectory based on the data provided.</p>
+                        <h3>Understanding Your 30-Year Projection</h3>
+                        <p>This comprehensive simulation models your financial trajectory through accumulation, retirement, and drawdown phases using UK tax rules and pension regulations.</p>
                         
                         <div className="guidance-grid">
                           <div className="guidance-item">
-                            <h4>Pension Accumulation</h4>
-                            <p>Your pension is projected to grow at an estimated 5% annually. This includes your monthly contributions and compound growth on your existing balance.</p>
+                            <h4>Accumulation Phase</h4>
+                            <p>While working, your pension grows at 5% annually (a balanced portfolio assumption). Your contributions are added each year until your planned retirement age.</p>
                           </div>
                           
                           <div className="guidance-item">
-                            <h4>Net Worth</h4>
-                            <p>This represents your total assets (pension pots and property value) minus any liabilities like mortgages or personal debts.</p>
+                            <h4>Retirement & Tax-Free Cash</h4>
+                            <p>At retirement, you can take 25% of your pension as a tax-free lump sum. The remaining 75% stays invested at a more conservative 4% growth rate during drawdown.</p>
                           </div>
                           
                           <div className="guidance-item">
-                            <h4>Income & Taxes</h4>
-                            <p>The "Cash Income" reflects your estimated state pension once you reach qualifying age, adjusted for 2.5% inflation. "Est. Taxes" assumes a simple 20% basic rate above the personal allowance (£12,570).</p>
+                            <h4>Income Calculation</h4>
+                            <p>Your income in retirement combines State Pension (from age 67) and pension drawdown. Drawdown is calculated to meet your stated income needs, inflation-adjusted at 2.5% per year.</p>
                           </div>
                           
                           <div className="guidance-item">
-                            <h4>Next Steps</h4>
-                            <p>To refine these figures, consider discussing drawdown options or annuity products with a financial professional. These projections do not currently model specific withdrawal strategies.</p>
+                            <h4>UK Tax Bands</h4>
+                            <p>Tax is calculated using 2024/25 bands: Personal Allowance £12,570, Basic Rate 20% (to £50,270), Higher Rate 40% (to £125,140), Additional Rate 45%. Personal Allowance tapers above £100k.</p>
+                          </div>
+                          
+                          <div className="guidance-item">
+                            <h4>Property & Net Worth</h4>
+                            <p>Property value grows at 3% annually. Your mortgage balance reduces over time. Net Worth = Pension Pot + Property Equity + Any Tax-Free Cash taken.</p>
+                          </div>
+                          
+                          <div className="guidance-item">
+                            <h4>Fund Depletion Warning</h4>
+                            <p>If your pension pot runs out before age 90, rows turn red. This indicates you may need to adjust your income expectations, retirement age, or contribution strategy.</p>
                           </div>
                         </div>
                       </div>
                     </div>
                   )}
-
-                  <div className="projections-assumptions">
-                    <h3>Assumptions:</h3>
-                    <ul>
-                      <li>Annual Investment Growth: {(GROWTH_RATE * 100).toFixed(1)}%</li>
-                      <li>Annual Inflation: {(INFLATION_RATE * 100).toFixed(1)}%</li>
-                      <li>No drawdown or annuity products purchased yet</li>
-                      <li>Tax calculation: Simple {(BASIC_TAX_RATE * 100).toFixed(0)}% above Personal Allowance</li>
-                    </ul>
-                  </div>
                 </div>
               </div>
             )}
