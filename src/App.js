@@ -320,6 +320,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
   const [projections, setProjections] = useState(null);
+  const [hasSavedData, setHasSavedData] = useState(false);
   const [viewMode, setViewMode] = useState('table'); // 'table' or 'chart'
   const [sidebarData, setSidebarData] = useState({});
   const [expandedSections, setExpandedSections] = useState({});
@@ -527,6 +528,7 @@ function App() {
       });
     }
     setProjections(results);
+    setHasSavedData(true);
   };
 
   const fetchSidebarData = async () => {
@@ -593,6 +595,7 @@ function App() {
 
         if (payload.total_pension_value || payload.date_of_birth) {
           calculateProjections(payload);
+          setHasSavedData(true);
           if (messages.length === 0) {
             setMessages([{
               id: makeId(),
@@ -707,6 +710,23 @@ function App() {
     if (user && showAuth) {
       setShowAuth(false);
     }
+    
+    // Check if user has any saved data to determine landing title
+    const checkSavedData = async () => {
+      if (!user || !supabase) return;
+      const { data, error } = await supabase
+        .from('pension_pots')
+        .select('current_value')
+        .eq('user_id', user.id)
+        .limit(1);
+      
+      if (!error && data && data.length > 0) {
+        setHasSavedData(true);
+      } else {
+        setHasSavedData(false);
+      }
+    };
+    checkSavedData();
   }, [user, showAuth]);
 
   const logPrompt = async (text) => {
@@ -864,7 +884,12 @@ function App() {
           <div className="landing-container">
             <div className="landing-card">
               <h1 className="landing-title">
-                {user ? 'Provide an update.' : 'Tell us about your pension situation.'}
+                {!user 
+                  ? 'Tell us about your pension situation.' 
+                  : hasSavedData 
+                    ? 'Provide an update.' 
+                    : 'Describe your pension status.'
+                }
               </h1>
               <p className="landing-subtitle">
                 Please omit any personal data like names, addresses etc. Disclaimer: Anything entered is stored in a secure database.
