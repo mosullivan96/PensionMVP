@@ -999,3 +999,75 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+/* Scenario Modelling View */
+.scenario-view {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 40px;
+  overflow-y: auto;
+}
+
+.scenario-container {
+  width: 100%;
+  max-width: 900px;
+}
+
+.scenario-card {
+  background: white;
+  border-radius: 16px;
+  padding: 32px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.08);
+}
+
+.scenario-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.scenario-header h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.scenario-close {
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #4b5563;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.scenario-close:hover {
+  background: #e5e7eb;
+  color: #111827;
+}
+
+.scenario-content {
+  text-align: center;
+  padding: 60px 20px;
+}
+
+.scenario-content h2 {
+  margin: 0 0 16px;
+  font-size: 32px;
+  font-weight: 700;
+  color: #2563eb;
+}
+
+.scenario-content p {
+  margin: 0;
+  font-size: 16px;
+  color: #6b7280;
+}
