@@ -367,7 +367,7 @@ function App() {
       };
       const { error } = await supabase
         .from('users')
-        .upsert(record, { onConflict: 'user_id' });
+        .upsert(record, { onConflict: 'email' });
       if (error) {
         console.error('Supabase users upsert error:', error.message);
       } else {
@@ -537,10 +537,11 @@ function App() {
       const results = {};
       const tablesToFetch = [...Object.keys(TABLE_LABELS), 'users'];
       for (const table of tablesToFetch) {
+        const userColumn = table === 'spouse_data' ? 'primary_user_id' : 'user_id';
         const { data, error } = await supabase
           .from(table)
           .select('*')
-          .eq('user_id', user.id);
+          .eq(userColumn, user.id);
         
         if (!error && data) {
           results[table] = data[0] || null;
@@ -560,8 +561,10 @@ function App() {
   };
 
   const handleDashboardClick = async (e) => {
+    console.log('Dashboard clicked');
     if (e) e.preventDefault();
     if (!user || !supabase) {
+      console.log('No user or supabase');
       setShowAuth(true);
       return;
     }
@@ -570,15 +573,22 @@ function App() {
       const results = {};
       const tablesToFetch = [...Object.keys(TABLE_LABELS), 'users'];
       for (const table of tablesToFetch) {
+        console.log(`Fetching from table: ${table}`);
+        const userColumn = table === 'spouse_data' ? 'primary_user_id' : 'user_id';
         const { data, error } = await supabase
           .from(table)
           .select('*')
-          .eq('user_id', user.id);
+          .eq(userColumn, user.id);
+        
+        if (error) {
+          console.error(`Error fetching ${table}:`, error.message);
+        }
         
         if (!error && data) {
           results[table] = data[0] || null;
         }
       }
+      console.log('Fetched sidebar data:', results);
       setSidebarData(results);
 
       if (results.users || results.pension_pots) {
@@ -592,6 +602,8 @@ function App() {
           total_debt: results.liabilities?.current_balance,
           state_pension_amount: results.state_pension?.estimated_annual_amount
         };
+
+        console.log('Calculated payload:', payload);
 
         if (payload.total_pension_value || payload.date_of_birth) {
           calculateProjections(payload);
@@ -642,7 +654,7 @@ function App() {
               email: authUser.email,
               created_at: new Date().toISOString(),
             },
-            { onConflict: 'user_id' }
+            { onConflict: 'email' }
           );
         if (error) {
           console.error('Supabase user upsert error:', error.message);
@@ -854,7 +866,7 @@ function App() {
           <span className="brand-name">Tarra</span>
         </div>
         <nav className="nav-links">
-          {user && (
+          {user && hasSavedData && (
             <a href="#dashboard" onClick={handleDashboardClick}>
               Dashboard
             </a>
@@ -1000,6 +1012,12 @@ function App() {
                       >
                         Chart
                       </button>
+                      <button 
+                        className={`toggle-btn ${viewMode === 'guidance' ? 'active' : ''}`}
+                        onClick={() => setViewMode('guidance')}
+                      >
+                        Guidance
+                      </button>
                     </div>
                   </div>
 
@@ -1030,7 +1048,7 @@ function App() {
                         </tbody>
                       </table>
                     </div>
-                  ) : (
+                  ) : viewMode === 'chart' ? (
                     <>
                       <div className="projections-chart-wrapper">
                         <ProjectionChart data={projections} retirementAge={plannedRetirementAge} />
@@ -1050,6 +1068,35 @@ function App() {
                         </div>
                       </div>
                     </>
+                  ) : (
+                    <div className="projections-guidance-wrapper">
+                      <div className="guidance-content">
+                        <h3>Understanding Your Projection</h3>
+                        <p>This 10-year simulation provides a high-level overview of your potential financial trajectory based on the data provided.</p>
+                        
+                        <div className="guidance-grid">
+                          <div className="guidance-item">
+                            <h4>Pension Accumulation</h4>
+                            <p>Your pension is projected to grow at an estimated 5% annually. This includes your monthly contributions and compound growth on your existing balance.</p>
+                          </div>
+                          
+                          <div className="guidance-item">
+                            <h4>Net Worth</h4>
+                            <p>This represents your total assets (pension pots and property value) minus any liabilities like mortgages or personal debts.</p>
+                          </div>
+                          
+                          <div className="guidance-item">
+                            <h4>Income & Taxes</h4>
+                            <p>The "Cash Income" reflects your estimated state pension once you reach qualifying age, adjusted for 2.5% inflation. "Est. Taxes" assumes a simple 20% basic rate above the personal allowance (£12,570).</p>
+                          </div>
+                          
+                          <div className="guidance-item">
+                            <h4>Next Steps</h4>
+                            <p>To refine these figures, consider discussing drawdown options or annuity products with a financial professional. These projections do not currently model specific withdrawal strategies.</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   )}
 
                   <div className="projections-assumptions">
