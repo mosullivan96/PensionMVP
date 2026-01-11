@@ -32,7 +32,8 @@
   "scripts": {
     "start": "react-scripts start",
     "server": "node server.js",
-    "dev": "concurrently \"npm run server\" \"npm start\"",
+    "python": "cd projections && python3 pension_projections.py",
+    "dev": "concurrently \"npm run server\" \"npm run python\" \"npm start\"",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"

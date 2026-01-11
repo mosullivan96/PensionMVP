@@ -11,26 +11,8 @@ import { Auth } from '@supabase/auth-ui-react';
 import { ThemeSupa } from '@supabase/auth-ui-shared';
 import './App.css';
 
-// Configuration constants - UK 2024/25 tax year
-const GROWTH_RATE_ACCUMULATION = 0.05; // 5% growth while accumulating (more aggressive)
-const GROWTH_RATE_DRAWDOWN = 0.04; // 4% growth in retirement (more conservative)
-const INFLATION_RATE = 0.025; // 2.5% annual inflation (BoE target)
-const STATE_PENSION_AGE = 67; // UK state pension age (born after 1960)
-const FULL_STATE_PENSION = 11502; // Full new state pension 2024/25
-
-// UK Income Tax Bands 2024/25
-const PERSONAL_ALLOWANCE = 12570;
-const BASIC_RATE_THRESHOLD = 50270;
-const HIGHER_RATE_THRESHOLD = 125140;
-const BASIC_TAX_RATE = 0.20;
-const HIGHER_TAX_RATE = 0.40;
-const ADDITIONAL_TAX_RATE = 0.45;
-
-// Pension rules
-const TAX_FREE_LUMP_SUM_RATE = 0.25; // 25% tax-free at crystallisation
+// Default retirement age
 const DEFAULT_RETIREMENT_AGE = 67;
-const PROJECTION_YEARS = 30; // Extended to 30 years for better planning
-const LIFE_EXPECTANCY = 90; // Plan to age 90
 
 // Tables that can have multiple records per user
 const MULTI_RECORD_TABLES = ['life_events', 'pension_pots', 'isa_accounts', 'investment_accounts'];
@@ -186,16 +168,24 @@ const TABLE_LABELS = {
   }
 };
 
-const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
+const ProjectionChartInner = ({ data, retirementAge, width, height, onRetirementAgeChange }) => {
   const margin = { top: 20, right: 70, bottom: 60, left: 70 };
   const xMax = width - margin.left - margin.right;
   const yMax = height - margin.top - margin.bottom;
+  
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragAge, setDragAge] = useState(retirementAge);
+  const svgRef = useRef(null);
 
   // Show all years for granular view
   const displayData = data;
   
   // X-axis labels only show every 5 years to avoid crowding
   const labelData = data.filter((d, i) => i % 5 === 0 || i === data.length - 1);
+  
+  // Get min and max ages from data
+  const minAge = data[0]?.age || 50;
+  const maxAge = data[data.length - 1]?.age || 90;
 
   const xScale = useMemo(
     () =>
@@ -203,7 +193,7 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
         range: [0, xMax],
         round: true,
         domain: displayData.map((d) => (d.age ? `Age ${d.age}` : d.year.toString())),
-        padding: 0.15, // Tighter padding for more bars
+        padding: 0.15,
       }),
     [xMax, displayData]
   );
@@ -228,8 +218,73 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
     [yMax, data]
   );
 
+  // Get x position for retirement line
+  const getRetirementX = (age) => {
+    const label = `Age ${age}`;
+    const x = xScale(label);
+    return x !== undefined ? x : 0;
+  };
+
+  // Convert x position to age
+  const xToAge = useCallback((xPos) => {
+    const step = xScale.step();
+    const index = Math.round(xPos / step);
+    const clampedIndex = Math.max(0, Math.min(index, data.length - 1));
+    return data[clampedIndex]?.age || retirementAge;
+  }, [xScale, data, retirementAge]);
+
+  // Handle mouse/touch events for dragging
+  const handleMouseDown = (e) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleMouseMove = useCallback((e) => {
+    if (!isDragging || !svgRef.current) return;
+    
+    const svg = svgRef.current;
+    const rect = svg.getBoundingClientRect();
+    const xPos = (e.clientX || e.touches?.[0]?.clientX) - rect.left - margin.left;
+    const newAge = xToAge(xPos);
+    
+    if (newAge >= minAge && newAge <= maxAge && newAge !== dragAge) {
+      setDragAge(newAge);
+    }
+  }, [isDragging, dragAge, minAge, maxAge, margin.left, xToAge]);
+
+  const handleMouseUp = useCallback(() => {
+    if (isDragging && dragAge !== retirementAge && onRetirementAgeChange) {
+      onRetirementAgeChange(dragAge);
+    }
+    setIsDragging(false);
+  }, [isDragging, dragAge, retirementAge, onRetirementAgeChange]);
+
+  // Add global event listeners for drag
+  useEffect(() => {
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+      window.addEventListener('touchmove', handleMouseMove);
+      window.addEventListener('touchend', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('touchmove', handleMouseMove);
+      window.removeEventListener('touchend', handleMouseUp);
+    };
+  }, [isDragging, handleMouseMove, handleMouseUp]);
+
+  // Update dragAge when retirementAge prop changes
+  useEffect(() => {
+    setDragAge(retirementAge);
+  }, [retirementAge]);
+
+  const retirementX = getRetirementX(isDragging ? dragAge : retirementAge);
+  const displayRetirementAge = isDragging ? dragAge : retirementAge;
+
   return (
-    <svg width={width} height={height}>
+    <svg ref={svgRef} width={width} height={height} style={{ cursor: isDragging ? 'ew-resize' : 'default' }}>
       <Group left={margin.left} top={margin.top}>
         {/* Pension Bars - all years */}
         {displayData.map((d) => {
@@ -238,7 +293,7 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
           const barHeight = yMax - yScale(d.pensionTotal);
           const barX = xScale(label);
           const barY = yMax - barHeight;
-          const isRetired = d.phase === 'Retirement';
+          const isRetired = d.age >= displayRetirementAge;
           const isDepleted = d.fundsDepleted;
 
           return (
@@ -254,6 +309,53 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
             />
           );
         })}
+
+        {/* Draggable Retirement Line */}
+        <g 
+          transform={`translate(${retirementX}, 0)`}
+          style={{ cursor: 'ew-resize' }}
+          onMouseDown={handleMouseDown}
+          onTouchStart={handleMouseDown}
+        >
+          {/* Invisible wider hit area for easier dragging */}
+          <rect
+            x={-10}
+            y={-10}
+            width={20}
+            height={yMax + 20}
+            fill="transparent"
+          />
+          {/* Visible line */}
+          <line
+            x1={0}
+            y1={-10}
+            x2={0}
+            y2={yMax}
+            stroke={isDragging ? "#dc2626" : "#2563eb"}
+            strokeWidth={isDragging ? 4 : 3}
+            strokeDasharray={isDragging ? "none" : "6,4"}
+          />
+          {/* Drag handle circle */}
+          <circle
+            cx={0}
+            cy={-15}
+            r={8}
+            fill={isDragging ? "#dc2626" : "#2563eb"}
+            stroke="white"
+            strokeWidth={2}
+          />
+          {/* Label */}
+          <text
+            x={0}
+            y={-28}
+            textAnchor="middle"
+            fill={isDragging ? "#dc2626" : "#2563eb"}
+            fontSize={11}
+            fontWeight={600}
+          >
+            Retire: {displayRetirementAge}
+          </text>
+        </g>
 
         {/* Total Income Line Overlay */}
         <LinePath
@@ -337,7 +439,7 @@ const ProjectionChartInner = ({ data, retirementAge, width, height }) => {
   );
 };
 
-const ProjectionChart = ({ data, retirementAge }) => {
+const ProjectionChart = ({ data, retirementAge, onRetirementAgeChange }) => {
   return (
     <ParentSize>
       {({ width, height }) => (
@@ -345,7 +447,8 @@ const ProjectionChart = ({ data, retirementAge }) => {
           data={data} 
           retirementAge={retirementAge} 
           width={width} 
-          height={height} 
+          height={height}
+          onRetirementAgeChange={onRetirementAgeChange}
         />
       )}
     </ParentSize>
@@ -366,7 +469,32 @@ function App() {
   const [sidebarData, setSidebarData] = useState({});
   const [expandedSections, setExpandedSections] = useState({});
   const [expandedIntegrations, setExpandedIntegrations] = useState({});
+  const [expandedAssumptions, setExpandedAssumptions] = useState(false);
+  const [expandedAssumptionGroups, setExpandedAssumptionGroups] = useState({
+    growth: false,
+    statePension: false,
+    other: false,
+  });
+  const [expandedIntegrationsGroup, setExpandedIntegrationsGroup] = useState(false);
+  const [expandedProfileGroup, setExpandedProfileGroup] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  
+  // Editable assumptions state
+  const [assumptions, setAssumptions] = useState({
+    growthAccumulation: 5,      // % p.a.
+    growthDrawdown: 4,          // % p.a.
+    inflation: 2.5,             // % p.a.
+    statePensionAge: 67,
+    fullStatePension: 11502,    // £/year
+    taxFreeLumpSum: 25,         // %
+    propertyGrowth: 3,          // % p.a.
+    planningHorizon: 90,        // Age
+  });
+  
+  // Toggle assumption sub-group
+  const toggleAssumptionGroup = (group) => {
+    setExpandedAssumptionGroups(prev => ({ ...prev, [group]: !prev[group] }));
+  };
   const [showReset, setShowReset] = useState(false);
   const [plannedRetirementAge, setPlannedRetirementAge] = useState(DEFAULT_RETIREMENT_AGE);
   const [resetEmail, setResetEmail] = useState('');
@@ -440,7 +568,7 @@ function App() {
         
         if (allEvents) {
           setLifeEvents(allEvents);
-          calculateProjections(null, allEvents);
+          await calculateProjections(null, allEvents);
         }
         fetchSidebarData();
       }
@@ -568,238 +696,65 @@ function App() {
     }
   };
 
-  // Calculate UK income tax using progressive bands
-  const calculateUKTax = (totalIncome) => {
-    if (totalIncome <= PERSONAL_ALLOWANCE) return 0;
-    
-    let tax = 0;
-    let remainingIncome = totalIncome;
-    
-    // Personal allowance tapering (£1 lost for every £2 over £100k)
-    let effectiveAllowance = PERSONAL_ALLOWANCE;
-    if (totalIncome > 100000) {
-      effectiveAllowance = Math.max(0, PERSONAL_ALLOWANCE - (totalIncome - 100000) / 2);
-    }
-    
-    remainingIncome -= effectiveAllowance;
-    if (remainingIncome <= 0) return 0;
-    
-    // Basic rate band (£12,571 to £50,270)
-    const basicBand = Math.min(remainingIncome, BASIC_RATE_THRESHOLD - PERSONAL_ALLOWANCE);
-    if (basicBand > 0) {
-      tax += basicBand * BASIC_TAX_RATE;
-      remainingIncome -= basicBand;
-    }
-    
-    // Higher rate band (£50,271 to £125,140)
-    const higherBand = Math.min(remainingIncome, HIGHER_RATE_THRESHOLD - BASIC_RATE_THRESHOLD);
-    if (higherBand > 0) {
-      tax += higherBand * HIGHER_TAX_RATE;
-      remainingIncome -= higherBand;
-    }
-    
-    // Additional rate (over £125,140)
-    if (remainingIncome > 0) {
-      tax += remainingIncome * ADDITIONAL_TAX_RATE;
-    }
-    
-    return tax;
-  };
-
-  const calculateProjections = (data, events = []) => {
+  // Call Python API for projections calculation
+  const calculateProjections = async (data, events = [], customAssumptions = null) => {
     const baseData = data || lastBaseData;
     if (!baseData) return;
     
     if (data) setLastBaseData(data);
-    const results = [];
-    const currentYear = new Date().getFullYear();
-
-    // Calculate current age
-    let currentAge = null;
-    if (baseData.date_of_birth) {
-      const dob = new Date(baseData.date_of_birth);
-      const today = new Date();
-      currentAge = today.getFullYear() - dob.getFullYear();
-      const m = today.getMonth() - dob.getMonth();
-      if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
-        currentAge--;
-      }
-    }
-
-    // Base values
-    let pensionPot = baseData.total_pension_value || 0;
-    const monthlyContribution = baseData.monthly_contribution || 0;
-    const annualContribution = monthlyContribution * 12;
-    const propertyValue = baseData.property_value || 0;
-    let mortgageBalance = baseData.total_debt || 0;
-    const statePensionBase = baseData.state_pension_amount || FULL_STATE_PENSION;
-    const annualIncomeNeeded = baseData.annual_income_needed || 25000;
-    const retirementAge = baseData.planned_retirement_age || DEFAULT_RETIREMENT_AGE;
-    const lumpSumTaken = baseData.lump_sum_taken || false;
-    const stillContributing = baseData.still_contributing !== false;
     
+    // Set retirement age from data
+    const retirementAge = baseData.planned_retirement_age || DEFAULT_RETIREMENT_AGE;
     if (retirementAge) {
       setPlannedRetirementAge(retirementAge);
     }
 
-    // Track cumulative values
-    let hasRetired = false;
-    let hasTakenLumpSum = lumpSumTaken;
-    let taxFreeCashReceived = 0;
-    let cumulativeDrawdown = 0;
-    let fundsDepleted = false;
-    let depletionAge = null;
-    
-    // Estimate years to mortgage payoff (assume 25 year mortgage, 4% rate)
-    const mortgageMonthlyPayment = mortgageBalance > 0 ? (mortgageBalance * 0.04 / 12) / (1 - Math.pow(1 + 0.04/12, -300)) : 0;
+    // Use custom assumptions or current state
+    const assumptionsToUse = customAssumptions || assumptions;
 
-    for (let i = 0; i <= PROJECTION_YEARS; i++) {
-      const year = currentYear + i;
-      const age = currentAge !== null ? currentAge + i : null;
-      
-      // Determine phase
-      const isRetired = age !== null && age >= retirementAge;
-      const isStatePensionAge = age !== null && age >= STATE_PENSION_AGE;
-      const justRetired = isRetired && !hasRetired;
-      hasRetired = isRetired;
-      
-      // Growth rate depends on phase
-      const growthRate = isRetired ? GROWTH_RATE_DRAWDOWN : GROWTH_RATE_ACCUMULATION;
-      
-      // Start of year pension value
-      const pensionStartOfYear = pensionPot;
-      
-      // Investment growth (applied to pension pot)
-      let investmentGrowth = 0;
-      if (i > 0 && !fundsDepleted) {
-        investmentGrowth = pensionPot * growthRate;
-        pensionPot += investmentGrowth;
-      }
-      
-      // Contributions (only if working and still contributing)
-      let yearContribution = 0;
-      if (!isRetired && stillContributing) {
-        yearContribution = annualContribution;
-        pensionPot += yearContribution;
-      }
-      
-      // Tax-free lump sum at retirement (25%)
-      let lumpSumThisYear = 0;
-      if (justRetired && !hasTakenLumpSum && pensionPot > 0) {
-        lumpSumThisYear = pensionPot * TAX_FREE_LUMP_SUM_RATE;
-        pensionPot -= lumpSumThisYear;
-        taxFreeCashReceived = lumpSumThisYear;
-        hasTakenLumpSum = true;
-      }
-      
-      // State pension (inflation-adjusted, only after state pension age)
-      const statePensionThisYear = isStatePensionAge 
-        ? statePensionBase * Math.pow(1 + INFLATION_RATE, i) 
-        : 0;
-      
-      // Calculate income needed (inflation-adjusted)
-      const incomeNeededThisYear = isRetired 
-        ? annualIncomeNeeded * Math.pow(1 + INFLATION_RATE, i)
-        : 0;
-      
-      // Calculate drawdown needed from pension to meet income target
-      let pensionDrawdown = 0;
-      let incomeShortfall = 0;
-      if (isRetired && !fundsDepleted) {
-        const incomeGap = Math.max(0, incomeNeededThisYear - statePensionThisYear);
-        if (incomeGap > 0) {
-          if (pensionPot >= incomeGap) {
-            pensionDrawdown = incomeGap;
-            pensionPot -= pensionDrawdown;
-            cumulativeDrawdown += pensionDrawdown;
-          } else {
-            // Funds running low - take what's left
-            pensionDrawdown = pensionPot;
-            incomeShortfall = incomeGap - pensionPot;
-            pensionPot = 0;
-            fundsDepleted = true;
-            if (!depletionAge) depletionAge = age;
+    try {
+      const response = await fetch('http://localhost:5001/api/projections', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          data: baseData,
+          events: events,
+          assumptions: {
+            growth_accumulation: assumptionsToUse.growthAccumulation / 100,
+            growth_drawdown: assumptionsToUse.growthDrawdown / 100,
+            inflation: assumptionsToUse.inflation / 100,
+            state_pension_age: assumptionsToUse.statePensionAge,
+            full_state_pension: assumptionsToUse.fullStatePension,
+            tax_free_lump_sum: assumptionsToUse.taxFreeLumpSum / 100,
+            property_growth: assumptionsToUse.propertyGrowth / 100,
+            planning_horizon: assumptionsToUse.planningHorizon,
           }
-        }
-      }
-      
-      // Apply Life Events
-      let lifeEventCost = 0;
-      let lifeEventNames = [];
-      if (age !== null) {
-        events.forEach(event => {
-          if (Number(event.event_age) === age || Number(event.event_year) === year) {
-            const cost = Number(event.cost || 0);
-            lifeEventCost += cost;
-            lifeEventNames.push(event.event_name);
-          }
-        });
-      }
-      
-      // Deduct life event costs (positive = expense, negative = windfall)
-      if (lifeEventCost !== 0) {
-        if (lifeEventCost > 0) {
-          // Expense - deduct from pension pot
-          pensionPot = Math.max(0, pensionPot - lifeEventCost);
-        } else {
-          // Windfall - add to pension pot
-          pensionPot -= lifeEventCost; // Negative cost = addition
-        }
-      }
-      
-      // Mortgage paydown (simple linear for now)
-      const mortgagePayment = Math.min(mortgageBalance, mortgageMonthlyPayment * 12);
-      mortgageBalance = Math.max(0, mortgageBalance - (mortgageMonthlyPayment * 12 * 0.3)); // ~30% goes to principal
-      
-      // Total income this year
-      const totalIncome = statePensionThisYear + pensionDrawdown + lumpSumThisYear;
-      
-      // Tax calculation (lump sum is tax-free, drawdown and state pension are taxable)
-      const taxableIncome = statePensionThisYear + pensionDrawdown;
-      const taxPaid = calculateUKTax(taxableIncome);
-      
-      // Net income after tax
-      const netIncome = totalIncome - taxPaid;
-      
-      // Property equity (value minus remaining mortgage)
-      const propertyEquity = propertyValue > 0 
-        ? propertyValue * Math.pow(1.03, i) - mortgageBalance // 3% property growth
-        : 0;
-      
-      // Total net worth
-      const netWorth = pensionPot + propertyEquity + taxFreeCashReceived;
-
-      results.push({
-        year,
-        age,
-        phase: isRetired ? 'Retirement' : 'Accumulation',
-        pensionStart: Math.round(pensionStartOfYear),
-        pensionTotal: Math.round(pensionPot),
-        pensionContribution: Math.round(yearContribution),
-        investmentGrowth: Math.round(investmentGrowth),
-        pensionDrawdown: Math.round(pensionDrawdown),
-        lumpSum: Math.round(lumpSumThisYear),
-        statePension: Math.round(statePensionThisYear),
-        totalIncome: Math.round(totalIncome),
-        taxes: Math.round(taxPaid),
-        netIncome: Math.round(netIncome),
-        incomeNeeded: Math.round(incomeNeededThisYear),
-        incomeShortfall: Math.round(incomeShortfall),
-        propertyEquity: Math.round(propertyEquity),
-        netWorth: Math.round(netWorth),
-        lifeEvents: lifeEventNames.join(', ') || null,
-        lifeEventCost: Math.round(lifeEventCost),
-        fundsDepleted
+        })
       });
+
+      if (!response.ok) {
+        throw new Error(`Projections API error: ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.projections) {
+        setProjections(result.projections);
+        setHasSavedData(true);
+        
+        // Log depletion warning if applicable
+        const depletedYear = result.projections.find(p => p.fundsDepleted);
+        if (depletedYear) {
+          console.info(`Warning: Funds projected to deplete at age ${depletedYear.age}`);
+        }
+      }
+    } catch (error) {
+      console.error('Error calculating projections:', error);
+      // Fallback: set empty projections on error
+      setProjections([]);
     }
-    
-    // Add summary stats
-    if (depletionAge) {
-      console.info(`Warning: Funds projected to deplete at age ${depletionAge}`);
-    }
-    
-    setProjections(results);
-    setHasSavedData(true);
   };
 
   // Helper to fetch all user data from Supabase tables
@@ -893,7 +848,7 @@ function App() {
         };
 
         if (payload.total_pension_value || payload.date_of_birth) {
-          calculateProjections(payload, results.life_events || []);
+          await calculateProjections(payload, results.life_events || []);
           setHasSavedData(true);
           if (messages.length === 0) {
             setMessages([{
@@ -1048,10 +1003,9 @@ function App() {
   const buildFinancialContext = () => {
     if (!projections || projections.length === 0) return null;
     
-    const currentYear = new Date().getFullYear();
     const currentAge = projections[0]?.age;
     const retirementProjection = projections.find(p => p.age === plannedRetirementAge);
-    const statePensionStartProjection = projections.find(p => p.age === STATE_PENSION_AGE);
+    const statePensionStartProjection = projections.find(p => p.age === assumptions.statePensionAge);
     const finalProjection = projections[projections.length - 1];
     const depletedYear = projections.find(p => p.fundsDepleted);
     
@@ -1060,7 +1014,7 @@ function App() {
       .filter((p, i) => 
         i === 0 || 
         p.age === plannedRetirementAge || 
-        p.age === STATE_PENSION_AGE ||
+        p.age === assumptions.statePensionAge ||
         i === projections.length - 1
       )
       .map(p => `Age ${p.age} (${p.year}): Pension £${p.pensionTotal.toLocaleString()}, Income £${p.totalIncome.toLocaleString()}/yr, Net Worth £${p.netWorth.toLocaleString()}`)
@@ -1078,7 +1032,7 @@ function App() {
     return `[FINANCIAL CONTEXT - Use this to inform your responses, do not repeat verbatim]
 Current Age: ${currentAge}
 Planned Retirement Age: ${plannedRetirementAge}
-State Pension Age: ${STATE_PENSION_AGE}
+State Pension Age: ${assumptions.statePensionAge}
 Years Until Retirement: ${Math.max(0, plannedRetirementAge - currentAge)}
 
 CURRENT FINANCIAL SNAPSHOT:
@@ -1092,7 +1046,7 @@ AT RETIREMENT (Age ${plannedRetirementAge}):
 - Tax-Free Lump Sum Available: £${retirementProjection ? Math.round(retirementProjection.pensionTotal * 0.25).toLocaleString() : 'N/A'}
 - Remaining After Lump Sum: £${retirementProjection ? Math.round(retirementProjection.pensionTotal * 0.75).toLocaleString() : 'N/A'}
 
-STATE PENSION (Age ${STATE_PENSION_AGE}):
+STATE PENSION (Age ${assumptions.statePensionAge}):
 - Annual State Pension: £${statePensionStartProjection?.statePension.toLocaleString() || 'N/A'}
 
 END OF PROJECTION (Age ${finalProjection?.age}):
@@ -1180,7 +1134,7 @@ When the user mentions a life event:
         persistStatePensionData(extracted);
         persistLiabilitiesData(extracted);
         persistPensionPotData(extracted);
-        calculateProjections(extracted, lifeEvents);
+        await calculateProjections(extracted, lifeEvents);
         fetchSidebarData();
         const summaryMessage = {
           id: generateId(),
@@ -1231,6 +1185,34 @@ When the user mentions a life event:
     setProjections(null);
     setSidebarData({});
     setShowScenarios(false);
+  };
+
+  // Handle retirement age change from draggable chart
+  const handleRetirementAgeChange = async (newAge) => {
+    if (!lastBaseData) return;
+    
+    // Update the base data with new retirement age
+    const updatedData = {
+      ...lastBaseData,
+      planned_retirement_age: newAge
+    };
+    
+    setPlannedRetirementAge(newAge);
+    setLastBaseData(updatedData);
+    
+    // Recalculate projections with new retirement age
+    await calculateProjections(updatedData, lifeEvents, assumptions);
+  };
+
+  // Handle assumption change
+  const handleAssumptionChange = async (key, value) => {
+    const newAssumptions = { ...assumptions, [key]: value };
+    setAssumptions(newAssumptions);
+    
+    if (lastBaseData) {
+      // Recalculate projections with new assumptions
+      await calculateProjections(lastBaseData, lifeEvents, newAssumptions);
+    }
   };
 
   const handleLogout = async () => {
@@ -1297,7 +1279,7 @@ When the user mentions a life event:
                 >
                   ← Back to Dashboard
                 </button>
-              </div>
+    </div>
               <div className="scenario-content">
                 <h2>Hello World</h2>
                 <p>Scenario modelling feature coming soon...</p>
@@ -1356,76 +1338,264 @@ When the user mentions a life event:
                 </div>
                 {!isSidebarCollapsed && (
                   <div className="sidebar-content">
+                    {/* Assumptions Section */}
                     <div className="sidebar-group">
-                      <div className="sidebar-group-header">Integrations</div>
-                      {['Banking', 'Investments', 'Pensions'].map((item) => (
-                        <div key={item} className="sidebar-section">
-                          <div 
-                            className={`sidebar-row-header ${expandedIntegrations[item] ? 'expanded' : ''}`}
-                            onClick={() => setExpandedIntegrations(prev => ({ ...prev, [item]: !prev[item] }))}
-                          >
-                            <span>{item}</span>
-                            <span className="chevron"></span>
-                          </div>
-                          {expandedIntegrations[item] && (
-                            <div className="sidebar-row-details">
-                              <div className="sidebar-detail-item">
-                                <span className="detail-value italic">No active connections</span>
-                              </div>
-                              <button className="connect-btn" onClick={(e) => e.stopPropagation()}>
-                                Connect
-                              </button>
+                      <div 
+                        className="sidebar-group-header clickable"
+                        onClick={() => setExpandedAssumptions(!expandedAssumptions)}
+                      >
+                        Assumptions
+                        <span className={`chevron ${expandedAssumptions ? 'expanded' : ''}`}></span>
+                      </div>
+                      {expandedAssumptions && (
+                        <>
+                          {/* Growth Rates */}
+                          <div className="sidebar-section">
+                            <div 
+                              className={`sidebar-row-header ${expandedAssumptionGroups.growth ? 'expanded' : ''}`}
+                              onClick={() => toggleAssumptionGroup('growth')}
+                            >
+                              <span>Growth Rates</span>
+                              <span className="chevron"></span>
                             </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="sidebar-group">
-                      <div className="sidebar-group-header">Profile</div>
-                      {Object.entries(TABLE_LABELS).map(([table, config]) => (
-                        <div key={table} className="sidebar-section">
-                          <div 
-                            className={`sidebar-row-header ${expandedSections[table] ? 'expanded' : ''}`}
-                            onClick={() => toggleSection(table)}
-                          >
-                            <span>{config.label}</span>
-                            <span className="chevron"></span>
-                          </div>
-                            {expandedSections[table] && (
+                            {expandedAssumptionGroups.growth && (
                               <div className="sidebar-row-details">
-                                {Array.isArray(sidebarData[table]) ? (
-                                  sidebarData[table].length > 0 ? (
-                                    sidebarData[table].map((record, index) => (
-                                      <div key={index} className="sidebar-multi-record">
-                                        {Object.entries(config.fields).map(([field, label]) => (
-                                          <div key={field} className="sidebar-detail-item">
-                                            <span className="detail-label">{label}</span>
-                                            <span className="detail-value">{formatValue(record[field])}</span>
-                                          </div>
-                                        ))}
-                                        {index < sidebarData[table].length - 1 && <hr className="record-divider" />}
-                                      </div>
-                                    ))
-                                  ) : (
-                                    <div className="sidebar-detail-item">
-                                      <span className="detail-value italic">Empty</span>
-                                    </div>
-                                  )
-                                ) : (
-                                  Object.entries(config.fields).map(([field, label]) => (
-                                    <div key={field} className="sidebar-detail-item">
-                                      <span className="detail-label">{label}</span>
-                                      <span className="detail-value">
-                                        {formatValue(sidebarData[table]?.[field])}
-                                      </span>
-                                    </div>
-                                  ))
-                                )}
+                                <div className="sidebar-detail-item editable">
+                                  <span className="detail-label">Accumulation</span>
+                                  <div className="detail-input">
+                                    <input
+                                      type="number"
+                                      step="0.5"
+                                      min="0"
+                                      max="15"
+                                      value={assumptions.growthAccumulation}
+                                      onChange={(e) => handleAssumptionChange('growthAccumulation', parseFloat(e.target.value) || 0)}
+                                    />
+                                    <span>%</span>
+                                  </div>
+                                </div>
+                                <div className="sidebar-detail-item editable">
+                                  <span className="detail-label">Drawdown</span>
+                                  <div className="detail-input">
+                                    <input
+                                      type="number"
+                                      step="0.5"
+                                      min="0"
+                                      max="15"
+                                      value={assumptions.growthDrawdown}
+                                      onChange={(e) => handleAssumptionChange('growthDrawdown', parseFloat(e.target.value) || 0)}
+                                    />
+                                    <span>%</span>
+                                  </div>
+                                </div>
+                                <div className="sidebar-detail-item editable">
+                                  <span className="detail-label">Property</span>
+                                  <div className="detail-input">
+                                    <input
+                                      type="number"
+                                      step="0.5"
+                                      min="0"
+                                      max="15"
+                                      value={assumptions.propertyGrowth}
+                                      onChange={(e) => handleAssumptionChange('propertyGrowth', parseFloat(e.target.value) || 0)}
+                                    />
+                                    <span>%</span>
+                                  </div>
+                                </div>
                               </div>
                             )}
-                        </div>
-                      ))}
+                          </div>
+
+                          {/* State Pension */}
+                          <div className="sidebar-section">
+                            <div 
+                              className={`sidebar-row-header ${expandedAssumptionGroups.statePension ? 'expanded' : ''}`}
+                              onClick={() => toggleAssumptionGroup('statePension')}
+                            >
+                              <span>State Pension</span>
+                              <span className="chevron"></span>
+                            </div>
+                            {expandedAssumptionGroups.statePension && (
+                              <div className="sidebar-row-details">
+                                <div className="sidebar-detail-item editable">
+                                  <span className="detail-label">Start Age</span>
+                                  <div className="detail-input">
+                                    <input
+                                      type="number"
+                                      min="60"
+                                      max="75"
+                                      value={assumptions.statePensionAge}
+                                      onChange={(e) => handleAssumptionChange('statePensionAge', parseInt(e.target.value) || 67)}
+                                    />
+                                  </div>
+                                </div>
+                                <div className="sidebar-detail-item editable">
+                                  <span className="detail-label">Annual Amount</span>
+                                  <div className="detail-input">
+                                    <span>£</span>
+                                    <input
+                                      type="number"
+                                      step="100"
+                                      min="0"
+                                      value={assumptions.fullStatePension}
+                                      onChange={(e) => handleAssumptionChange('fullStatePension', parseInt(e.target.value) || 0)}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Other */}
+                          <div className="sidebar-section">
+                            <div 
+                              className={`sidebar-row-header ${expandedAssumptionGroups.other ? 'expanded' : ''}`}
+                              onClick={() => toggleAssumptionGroup('other')}
+                            >
+                              <span>Other</span>
+                              <span className="chevron"></span>
+                            </div>
+                            {expandedAssumptionGroups.other && (
+                              <div className="sidebar-row-details">
+                                <div className="sidebar-detail-item editable">
+                                  <span className="detail-label">Inflation</span>
+                                  <div className="detail-input">
+                                    <input
+                                      type="number"
+                                      step="0.5"
+                                      min="0"
+                                      max="10"
+                                      value={assumptions.inflation}
+                                      onChange={(e) => handleAssumptionChange('inflation', parseFloat(e.target.value) || 0)}
+                                    />
+                                    <span>%</span>
+                                  </div>
+                                </div>
+                                <div className="sidebar-detail-item editable">
+                                  <span className="detail-label">Tax-Free Lump Sum</span>
+                                  <div className="detail-input">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      max="100"
+                                      value={assumptions.taxFreeLumpSum}
+                                      onChange={(e) => handleAssumptionChange('taxFreeLumpSum', parseFloat(e.target.value) || 0)}
+                                    />
+                                    <span>%</span>
+                                  </div>
+                                </div>
+                                <div className="sidebar-detail-item editable">
+                                  <span className="detail-label">Planning Horizon</span>
+                                  <div className="detail-input">
+                                    <span>Age</span>
+                                    <input
+                                      type="number"
+                                      min="70"
+                                      max="100"
+                                      value={assumptions.planningHorizon}
+                                      onChange={(e) => handleAssumptionChange('planningHorizon', parseInt(e.target.value) || 90)}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Integrations Section */}
+                    <div className="sidebar-group">
+                      <div 
+                        className="sidebar-group-header clickable"
+                        onClick={() => setExpandedIntegrationsGroup(!expandedIntegrationsGroup)}
+                      >
+                        Integrations
+                        <span className={`chevron ${expandedIntegrationsGroup ? 'expanded' : ''}`}></span>
+                      </div>
+                      {expandedIntegrationsGroup && (
+                        <>
+                          {['Banking', 'Investments', 'Pensions'].map((item) => (
+                            <div key={item} className="sidebar-section">
+                              <div 
+                                className={`sidebar-row-header ${expandedIntegrations[item] ? 'expanded' : ''}`}
+                                onClick={() => setExpandedIntegrations(prev => ({ ...prev, [item]: !prev[item] }))}
+                              >
+                                <span>{item}</span>
+                                <span className="chevron"></span>
+                              </div>
+                              {expandedIntegrations[item] && (
+                                <div className="sidebar-row-details">
+                                  <div className="sidebar-detail-item">
+                                    <span className="detail-value italic">No active connections</span>
+                                  </div>
+                                  <button className="connect-btn" onClick={(e) => e.stopPropagation()}>
+                                    Connect
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+
+                    {/* Profile Section */}
+                    <div className="sidebar-group">
+                      <div 
+                        className="sidebar-group-header clickable"
+                        onClick={() => setExpandedProfileGroup(!expandedProfileGroup)}
+                      >
+                        Profile
+                        <span className={`chevron ${expandedProfileGroup ? 'expanded' : ''}`}></span>
+                      </div>
+                      {expandedProfileGroup && (
+                        <>
+                          {Object.entries(TABLE_LABELS).map(([table, config]) => (
+                            <div key={table} className="sidebar-section">
+                              <div 
+                                className={`sidebar-row-header ${expandedSections[table] ? 'expanded' : ''}`}
+                                onClick={() => toggleSection(table)}
+                              >
+                                <span>{config.label}</span>
+                                <span className="chevron"></span>
+                              </div>
+                              {expandedSections[table] && (
+                                <div className="sidebar-row-details">
+                                  {Array.isArray(sidebarData[table]) ? (
+                                    sidebarData[table].length > 0 ? (
+                                      sidebarData[table].map((record, index) => (
+                                        <div key={index} className="sidebar-multi-record">
+                                          {Object.entries(config.fields).map(([field, label]) => (
+                                            <div key={field} className="sidebar-detail-item">
+                                              <span className="detail-label">{label}</span>
+                                              <span className="detail-value">{formatValue(record[field])}</span>
+                                            </div>
+                                          ))}
+                                          {index < sidebarData[table].length - 1 && <hr className="record-divider" />}
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <div className="sidebar-detail-item">
+                                        <span className="detail-value italic">Empty</span>
+                                      </div>
+                                    )
+                                  ) : (
+                                    Object.entries(config.fields).map(([field, label]) => (
+                                      <div key={field} className="sidebar-detail-item">
+                                        <span className="detail-label">{label}</span>
+                                        <span className="detail-value">
+                                          {formatValue(sidebarData[table]?.[field])}
+                                        </span>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1436,7 +1606,7 @@ When the user mentions a life event:
               <div className="projections-container">
                 <div className="projections-card">
                   <div className="projections-header">
-                    <h2 className="projections-title">10-Year Simulation</h2>
+                    <h2 className="projections-title">Your Pension Breakdown</h2>
                     <div className="view-toggle">
                       <button 
                         className={`toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
@@ -1459,22 +1629,12 @@ When the user mentions a life event:
                     </div>
                   </div>
 
-                  <div className="projections-assumptions">
-                    <h3>Key Assumptions (UK 2024/25):</h3>
-                    <ul>
-                      <li>Growth during accumulation: {(GROWTH_RATE_ACCUMULATION * 100).toFixed(0)}% p.a.</li>
-                      <li>Growth during drawdown: {(GROWTH_RATE_DRAWDOWN * 100).toFixed(0)}% p.a.</li>
-                      <li>Inflation: {(INFLATION_RATE * 100).toFixed(1)}% p.a. (BoE target)</li>
-                      <li>State Pension Age: {STATE_PENSION_AGE}</li>
-                      <li>Full State Pension: £{FULL_STATE_PENSION.toLocaleString()}/year</li>
-                      <li>Tax-Free Lump Sum: {(TAX_FREE_LUMP_SUM_RATE * 100).toFixed(0)}% at retirement</li>
-                      <li>Property growth: 3% p.a.</li>
-                      <li>Planning horizon: Age 90</li>
-                    </ul>
-                  </div>
 
                   {viewMode === 'table' ? (
                     <div className="projections-table-wrapper">
+                      <div className="table-drag-hint">
+                        Click any row between ages 55-75 to change your retirement age
+                      </div>
                       <table className="projections-table">
                         <thead>
                           <tr>
@@ -1494,14 +1654,25 @@ When the user mentions a life event:
                         </thead>
                         <tbody>
                           {projections.map((p, idx) => {
-                            const isFirstRetirement = p.phase === 'Retirement' && (idx === 0 || projections[idx - 1]?.phase !== 'Retirement');
+                            const isRetirementLine = p.age === plannedRetirementAge;
+                            const isClickableForRetirement = p.age >= 55 && p.age <= 75;
                             return (
                             <tr 
                               key={p.year} 
-                              className={`${p.phase === 'Retirement' ? 'retirement-row' : ''} ${isFirstRetirement ? 'first-retirement' : ''} ${p.fundsDepleted ? 'depleted-row' : ''}`}
+                              className={`
+                                ${p.phase === 'Retirement' ? 'retirement-row' : ''} 
+                                ${isRetirementLine ? 'retirement-line-row' : ''} 
+                                ${p.fundsDepleted ? 'depleted-row' : ''}
+                                ${isClickableForRetirement ? 'clickable-row' : ''}
+                              `}
+                              onClick={() => isClickableForRetirement && p.age !== plannedRetirementAge && handleRetirementAgeChange(p.age)}
+                              title={isClickableForRetirement ? `Click to set retirement at age ${p.age}` : ''}
                             >
                               <td>{p.year}</td>
-                              <td>{p.age ?? 'N/A'}</td>
+                              <td className="age-cell">
+                                {p.age ?? 'N/A'}
+                                {isRetirementLine && <span className="retirement-marker">◀ Retire</span>}
+                              </td>
                               <td className={p.fundsDepleted ? 'warning' : ''}>
                                 £{p.pensionTotal.toLocaleString()}
                               </td>
@@ -1547,24 +1718,28 @@ When the user mentions a life event:
                   ) : viewMode === 'chart' ? (
                     <>
                       <div className="projections-chart-wrapper">
-                        <ProjectionChart data={projections} retirementAge={plannedRetirementAge} />
+                        <ProjectionChart 
+                          data={projections} 
+                          retirementAge={plannedRetirementAge} 
+                          onRetirementAgeChange={handleRetirementAgeChange}
+                        />
                       </div>
                       <div className="chart-legend-bottom">
                         <div className="legend-item">
                           <span className="dot pre-retirement"></span>
-                          <span>Accumulation Phase</span>
+                          <span>Accumulation</span>
                         </div>
                         <div className="legend-item">
                           <span className="dot post-retirement"></span>
-                          <span>Retirement Phase</span>
+                          <span>Retirement</span>
                         </div>
                         <div className="legend-item">
                           <span className="dot depleted"></span>
-                          <span>Funds Depleted</span>
+                          <span>Depleted</span>
                         </div>
                         <div className="legend-item">
                           <span className="line income-line"></span>
-                          <span>Total Income</span>
+                          <span>Income</span>
                         </div>
                       </div>
                     </>
